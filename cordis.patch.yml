@@ -1,0 +1,15 @@
+# Bundle patch for dsh-tui-theme: insert the plugin as a profile row.
+# The plugin only consumes optional seams (themes dir, tuiStatus,
+# tuiSettingsSections, settings) and never registers shortcuts or commands.
+# followSystem opts this deployment into background-follow (the schema
+# default is off for generic installs).
+- insert:
+    - id: dsh-tui-theme
+      name: 'dsh-tui-theme'
+      config:
+        autoInstallThemes: true
+        statusEnabled: true
+        followSystem: true
+        showGlyph: true
+        showClock: true
+        showTurns: true
