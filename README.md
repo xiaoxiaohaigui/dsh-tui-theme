@@ -115,5 +115,5 @@ npm run verify               # 沙盒测试（临时 HOME + 伪造 TTY，不碰�
 
 ## 兼容性
 
-- dsh-TUI 的 `dsh-tui-extensions` 扩展面（tuiStatus / tuiSettingsSections）；旧版 profile 缺这些服务时插件自动退化为“仅安装主题”，不会报错。
+- **dsh-TUI 版本下限：0.8.8**（全功能，含状态行与设置面板；0.9.0 实测）。更旧的宿主缺 `dsh-tui-extensions` 扩展面时，插件自动降级为“仅安装三套主题 + 背景跟随”，不报错。
 - Node `^22.19 || >=24`，纯 ESM，MIT。
