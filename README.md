@@ -23,6 +23,20 @@
 
 > 小知识：`pink-day` 的 `text` 写成 `rgb(61,43,51)` 而非 hex——宿主按 `text` 墨色亮度自动判定主题深浅，且只认 `rgb()` 格式。
 
+## 截图
+
+实测于 dsh-tui 0.9.0：
+
+| 昼樱 `pink-day` | 夜樱 `pink-night` |
+| :---: | :---: |
+| ![pink-day 主题界面](docs/screenshots/pink-day.png) | ![pink-night 主题界面](docs/screenshots/pink-night.png) |
+
+`/settings` 里的 pink-theme 区块（跟随终端背景 / 花符 / 时钟 / 轮数，保存即时生效）：
+
+![pink-theme 设置区块](docs/screenshots/settings.png)
+
+> 图中底栏上下文进度条的蓝色分段与 ❯ 提示符是宿主硬编码的，见下文[宿主限制](#受宿主限制目前无法定制的部分)。
+
 ## 自动跟随终端背景
 
 设置里的“跟随终端背景”开启后（本部署默认开启）：
@@ -35,11 +49,14 @@
 ## 安装
 
 ```sh
-# 方式一：本地路径（开发/自用）
-dsh plugin --profile dsh-tui add -w /path/to/dsh-tui-theme
+# 方式一：从 npm（已发布）
+dsh plugin --profile dsh-tui add -w dsh-tui-theme
 
-# 方式二：从 GitHub（发布后）
-dsh plugin --profile dsh-tui add -w github:<你的用户名>/dsh-tui-theme
+# 方式二：从 GitHub
+dsh plugin --profile dsh-tui add -w github:xiaoxiaohaigui/dsh-tui-theme
+
+# 方式三：本地路径（开发/自用）
+dsh plugin --profile dsh-tui add -w /path/to/dsh-tui-theme
 ```
 
 重启 dsh-TUI 后插件自动把三套主题复制进 `~/.dsh-tui/themes/`（**仅缺失时复制，绝不覆盖你已有的同名文件**），然后：
@@ -65,7 +82,19 @@ dsh plugin --profile dsh-tui add -w github:<你的用户名>/dsh-tui-theme
 
 三项装饰全关时状态行整体消失。另有仅 profile 层的开关（`cordis.patch.yml`，不出现在 /settings）：`autoInstallThemes`、`statusEnabled`。
 
-> 已知宿主限制：底栏的上下文进度条分段色（蓝色系）与空余段配色是宿主硬编码的，主题与插件均无法覆盖；自定义浅色主题（pink-day）会拿到深色空余段配色（宿主按 `themeName === 'light'` 判断，不识别自定义浅色主题）。这需要上游修复。
+## 受宿主限制、目前无法定制的部分
+
+以下元素的颜色/形态由 dsh-TUI 宿主**硬编码**，不读取任何主题键，主题 JSON 与插件接缝都覆盖不到（dsh-TUI 0.9.0 实测）：
+
+| 元素 | 现状 | 位置（宿主源码） |
+| --- | --- | --- |
+| 输入框 ❯ 提示符 | 默认态无颜色参数（终端默认前景色，模型工作时变暗）；最高推理档充能动画用**写死的蓝色 ramp**（深色端 `#82B9FF` / 浅色端 `#1E5FEB`） | `EffortChargeGlyph.tsx`、`trajectory/effortIgnition.ts` |
+| 底栏上下文进度条分段色 | system / prompt / assistant / thinking / tools 五段为**写死的藏青→品牌蓝系**（`#22305F`→`#5A7CFF`），永远不随主题变化 | `screens/StatusMetrics.ts` |
+| 进度条空余段配色 | 宿主按 `themeName === 'light'` **字符串比较**取浅色配色——自定义浅色主题（如 pink-day）不等于 `'light'`，会拿到深色空余段，在浅色终端上偏深 | `screens/StatusLine.tsx` |
+| 状态行文字颜色 | 插件状态行（tuiStatus）由宿主统一以**无色 + 终端 dim** 渲染，插件无法指定颜色（✿ 行因此继承终端默认前景色） | `screens/Chat.tsx` |
+| 主界面组件与布局 | 顶栏像素鲸鱼、工具卡、输入框等宿主组件不可被插件替换或改布局——平台规则（内建优先，无组件替换接缝）；主题能碰的只有颜色层 | 宿主架构约定 |
+
+这些都需要上游 dsh-TUI 修改（例如：把充能色/进度条分段色接入主题键、空余段判断改用 `isLightThemeActive()`）。上游修复前，任何社区主题包都受同样约束。
 
 ## 卸载
 
