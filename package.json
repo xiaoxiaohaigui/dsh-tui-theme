@@ -1,6 +1,6 @@
 {
   "name": "dsh-tui-theme",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Sakura-pink themes for dsh-TUI with terminal-background auto-follow (pink-day/pink-night), a blossom status line, and a /settings section. No shortcuts, no commands.",
   "type": "module",
   "main": "lib/types/index.js",
@@ -16,6 +16,7 @@
   "files": [
     "lib",
     "themes",
+    "docs",
     "cordis.patch.yml"
   ],
   "engines": {
