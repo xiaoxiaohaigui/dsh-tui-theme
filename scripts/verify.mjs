@@ -194,6 +194,7 @@ const emit = (record, event, ...args) => {
 
   // Fake TTY streams: the "terminal" answers OSC 11 with a light background.
   const writes = []
+  const unshifted = []
   const listeners = new Map()
   const rawModeCalls = []
   const fakeStdout = { isTTY: true, write: data => { writes.push(String(data)); return true } }
@@ -205,6 +206,8 @@ const emit = (record, event, ...args) => {
     resume() {},
     on(event, fn) { listeners.set(event, fn) },
     removeListener(event, fn) { listeners.delete(event) },
+    unshift(buf) { unshifted.push(buf.toString('latin1')) },
+    emit() { return true },
   }
   const emitStdin = data => { listeners.get('data')?.(Buffer.from(data, 'latin1')) }
   const replyLator = () => {
@@ -214,7 +217,7 @@ const emit = (record, event, ...args) => {
   // No reply → timeout → undefined, nothing written.
   {
     const immediateTimeout = cb => { queueMicrotask(cb); return 0 }
-    const light = await refreshDetectedBackground(dataDir, fakeStdout, fakeStdin, immediateTimeout)
+    const light = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, immediateTimeout)
     assert.equal(light, undefined)
     assert.equal(readFollowCache(dataDir), undefined)
     assert.equal(readThemePref(dataDir), undefined)
@@ -223,11 +226,11 @@ const emit = (record, event, ...args) => {
 
   // Light reply → cache + pref written, raw mode restored.
   fakeStdout.write = data => { writes.push(String(data)); queueMicrotask(replyLator); return true }
-  const light = await refreshDetectedBackground(dataDir, fakeStdout, fakeStdin, setTimeout)
+  const light = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, setTimeout)
   assert.equal(light, true)
   assert.equal(readFollowCache(dataDir).light, true)
   assert.equal(readThemePref(dataDir), 'pink-day')
-  assert.match(writes.at(-1), /^\x1b\]11;\?\x07$/)
+  assert.match(writes.at(-1), /^\x1b\]11;\?\x07\x1b\[c$/, 'OSC 11 query + DA1 sentinel')
   assert.deepEqual(rawModeCalls, [true, false, true, false])
 
   // Cached dark flip rewrites the pref synchronously (pre-mount path).
@@ -241,9 +244,58 @@ const emit = (record, event, ...args) => {
 
   // Non-TTY → undefined immediately, no writes.
   writes.length = 0
-  assert.equal(await refreshDetectedBackground(dataDir, { isTTY: false }, fakeStdin, setTimeout), undefined)
+  assert.equal(await refreshDetectedBackground(dataDir, () => true, { isTTY: false }, fakeStdin, setTimeout), undefined)
   assert.equal(writes.length, 0)
-  console.log('✓ follow: OSC 11 detect → cache → pink-day/pink-night pref, safe fallbacks')
+
+  // Keystrokes arriving inside the window (before/after the reply) are
+  // replayed via unshift instead of being swallowed.
+  unshifted.length = 0
+  fakeStdout.write = data => {
+    writes.push(String(data))
+    queueMicrotask(() => emitStdin('hi\x1b]11;rgb:1111/2222/3333\x07there'))
+    return true
+  }
+  const light2 = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, setTimeout)
+  assert.equal(light2, false)
+  assert.equal(unshifted.join(''), 'hithere', 'non-reply bytes replayed for the host parser')
+
+  // DA1 before any OSC 11 reply → early exit, nothing written.
+  unshifted.length = 0
+  fakeStdout.write = data => {
+    writes.push(String(data))
+    queueMicrotask(() => emitStdin('\x1b[?62;22c'))
+    return true
+  }
+  const light3 = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, setTimeout)
+  assert.equal(light3, undefined)
+
+  // Follow turned off mid-window → detection still resolves but the pref
+  // write is skipped (off = manual choice preserved).
+  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
+  rmSync(join(dataDir, 'theme.json'), { force: true })
+  let active = true
+  fakeStdout.write = data => {
+    writes.push(String(data))
+    queueMicrotask(() => {
+      active = false
+      emitStdin('\x1b]11;rgb:ffff/ffff/ffff\x1b\\')
+    })
+    return true
+  }
+  const light4 = await refreshDetectedBackground(dataDir, () => active, fakeStdout, fakeStdin, setTimeout)
+  assert.equal(light4, true)
+  assert.equal(existsSync(join(dataDir, 'theme.json')), false, 'in-flight reply must not write after off')
+  assert.equal(existsSync(join(dataDir, 'theme-follow.json')), false)
+  // Same window with follow still on → the write lands.
+  active = true
+  fakeStdout.write = data => {
+    writes.push(String(data))
+    queueMicrotask(() => emitStdin('\x1b]11;rgb:ffff/ffff/ffff\x1b\\'))
+    return true
+  }
+  await refreshDetectedBackground(dataDir, () => active, fakeStdout, fakeStdin, setTimeout)
+  assert.equal(readThemePref(dataDir), 'pink-day')
+  console.log('✓ follow: OSC 11 detect → cache → pref, keystroke replay, mid-window off')
 }
 
 // ── 6. statusEnabled: false silences the whole line ─────────────────────────
@@ -318,6 +370,35 @@ const emit = (record, event, ...args) => {
   assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 4✦$/)
   delete process.env.DSH_TUI_THEME
   console.log('✓ theme gating: pink-only by default, opt-in shows everywhere')
+}
+
+// ── 9. settings service hostility: registration throws → warn, never crash ─
+{
+  const throwingSettings = {
+    register() { throw new Error('namespace already registered (hot reload)') },
+  }
+  const { ctx, record } = makeStubCtx({ settingsService: throwingSettings })
+  apply(ctx) // must not throw
+  assert.equal(record.warnings.length, 1, 'registration failure logs one warning')
+  assert.match(record.warnings[0], /settings namespace registration failed/)
+  console.log('✓ hostile settings service: registration failure warns, never propagates')
+}
+
+// ── 10. follow fallback timer: lifecycle-managed (M5) ──────────────────────
+{
+  const infos = []
+  const { ctx, record } = makeStubCtx() // no settings service → backstop path
+  ctx.logger.info = msg => infos.push(String(msg))
+  apply(ctx, { followSystem: true })
+  // Dispose before the 150ms backstop can fire.
+  for (const dispose of record.disposers) dispose()
+  await new Promise(r => setTimeout(r, 250))
+  assert.equal(
+    infos.some(m => m.includes('follow:')),
+    false,
+    'disposed plugin must not start follow from the backstop timer',
+  )
+  console.log('✓ follow fallback timer: cleared on dispose, never fires post-teardown')
 }
 
 console.log('\nAll plugin verifications passed.')

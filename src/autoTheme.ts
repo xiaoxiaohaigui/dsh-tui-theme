@@ -30,6 +30,12 @@ const QUERY = '\x1b]11;?\x07'
 // OSC 11 reply: rgb:RRRR/GGGG/BBBB with 1-4 hex digits per channel, BEL or
 // ST terminated.
 const REPLY = /\x1b\]11;rgb:([0-9a-fA-F]{1,4})\/([0-9a-fA-F]{1,4})\/([0-9a-fA-F]{1,4})(?:\x07|\x1b\\)/
+// DA1 sentinel: every terminal since VT100 answers CSI c. The host's own
+// terminal-querier uses this to avoid timeouts — a DA1 reply arriving before
+// any OSC 11 reply proves the terminal will never answer OSC 11, so the
+// window closes immediately instead of running out the full timeout.
+const DA1_QUERY = '\x1b[c'
+const DA1_REPLY = /\x1b\[\?[0-9;]*c/
 const DETECT_TIMEOUT_MS = 400
 
 interface FollowCache {
@@ -125,7 +131,15 @@ function isLightBackground(r: number, g: number, b: number): boolean {
  * Best effort: no TTY, an unresponsive terminal, or a parse failure just
  * leaves the previous state intact. Runs before the host's own stdin
  * parsing is mounted; raw mode is restored to whatever it was.
+ *
+ * Keystroke safety: the 'data' listener consumes every byte of the window
+ * (the terminal multiplexes replies and keypresses on one stream). Anything
+ * that is not part of the OSC 11 reply is re-emitted through stdin.emit on
+ * teardown, so input typed mid-window reaches the host parser intact.
  * @param dataDir - The host data directory (~/.dsh-tui).
+ * @param isActive - Live follow gate: a false return (follow turned off
+ *   mid-window) makes finish() skip the pref write — off preserves the
+ *   manual choice even for an in-flight detection.
  * @param stdout - Injectable for tests.
  * @param stdin - Injectable for tests.
  * @param setTimeoutFn - Injectable for tests.
@@ -133,6 +147,7 @@ function isLightBackground(r: number, g: number, b: number): boolean {
  */
 export function refreshDetectedBackground(
   dataDir: string,
+  isActive: () => boolean = () => true,
   stdout: NodeJS.WriteStream = process.stdout,
   stdin: NodeJS.ReadStream = process.stdin,
   setTimeoutFn: typeof setTimeout = setTimeout,
@@ -151,17 +166,36 @@ export function refreshDetectedBackground(
     }
     let buffer = ''
     let settled = false
-    const finish = (light: boolean | undefined): void => {
+    // Push the window's leftover bytes back for the host's input parser.
+    // unshift() returns them to the stream's internal buffer, which both the
+    // host's pull-mode 'readable' pump (mounted later) and any flowing-mode
+    // 'data' listener consume; the emit() fallback covers a torn-down stream
+    // where unshift refuses to work. Keystrokes typed during detection used
+    // to be silently dropped here. latin1 is byte-exact.
+    const replayLeftover = (leftover: string): void => {
+      if (leftover === '') return
+      try {
+        stdin.unshift(Buffer.from(leftover, 'latin1'))
+      } catch {
+        try {
+          stdin.emit('data', Buffer.from(leftover, 'latin1'))
+        } catch {
+          // Best effort: input preservation must never throw from a detector.
+        }
+      }
+    }
+    const finish = (light: boolean | undefined, leftover: string): void => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       stdin.removeListener('data', onData)
+      replayLeftover(leftover)
       try {
         stdin.setRawMode?.(wasRaw)
       } catch {
         // Stream already torn down — nothing to restore.
       }
-      if (light !== undefined) {
+      if (light !== undefined && isActive()) {
         writeFollowCache(light, dataDir)
         const target = themeForBackground(light)
         if (readThemePref(dataDir) !== target) {
@@ -173,19 +207,29 @@ export function refreshDetectedBackground(
     const onData = (chunk: Buffer | string): void => {
       buffer += typeof chunk === 'string' ? chunk : chunk.toString('latin1')
       const match = REPLY.exec(buffer)
-      if (match === null) return
-      finish(
-        isLightBackground(
+      if (match !== null) {
+        const light = isLightBackground(
           channel8(match[1] ?? ''),
           channel8(match[2] ?? ''),
           channel8(match[3] ?? ''),
-        ),
-      )
+        )
+        const leftover = buffer.slice(0, match.index) + buffer.slice(match.index + match[0].length)
+        finish(light, leftover)
+        return
+      }
+      // DA1 arrived before any OSC 11 reply: this terminal skips OSC 11
+      // entirely (host querier pattern) — stop waiting. Bytes after the DA1
+      // reply can only be input, so they come along.
+      const da1 = DA1_REPLY.exec(buffer)
+      if (da1 !== null) {
+        const leftover = buffer.slice(0, da1.index) + buffer.slice(da1.index + da1[0].length)
+        finish(undefined, leftover)
+      }
     }
-    const timer = setTimeoutFn(() => finish(undefined), DETECT_TIMEOUT_MS)
+    const timer = setTimeoutFn(() => finish(undefined, buffer), DETECT_TIMEOUT_MS)
     if (stdin.isPaused()) stdin.resume()
     stdin.on('data', onData)
-    stdout.write(QUERY)
+    stdout.write(QUERY + DA1_QUERY)
   })
 }
 
@@ -193,17 +237,20 @@ export function refreshDetectedBackground(
  * The whole follow sequence for apply(): cached value now (pre-mount),
  * fresh detection for the next boot.
  * @param dataDir - The host data directory (~/.dsh-tui).
+ * @param isActive - Live follow gate, re-queried when an in-flight reply
+ *   lands (follow may be switched off in /settings during the window).
  * @param log - Info sink for the applied/refreshed outcomes.
  */
 export function runFollowSystem(
   dataDir: string,
+  isActive: () => boolean,
   log: (message: string) => void,
 ): void {
   const applied = applyCachedFollow(dataDir)
   if (applied !== undefined && existsSync(prefPath(dataDir))) {
     log(`follow: applied cached background (${applied})`)
   }
-  void refreshDetectedBackground(dataDir).then(light => {
+  void refreshDetectedBackground(dataDir, isActive).then(light => {
     if (light === undefined) {
       log('follow: terminal background unavailable, keeping current choice')
     } else {

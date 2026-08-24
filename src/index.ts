@@ -109,8 +109,11 @@ export function apply(ctx: Context, config: Config = {}): void {
   // write would, and toggling followSystem in /settings re-decides live.
   let followActive: boolean | undefined
   const dataDir = join(homeDir(), '.dsh-tui')
+  // Live gate for in-flight detections: a reply that lands after the user
+  // turned follow off must not rewrite the pref.
+  const followEnabled = (): boolean => followActive === true
   const startFollow = (): void => {
-    runFollowSystem(dataDir, message => {
+    runFollowSystem(dataDir, followEnabled, message => {
       ctx.logger.info(`dsh-tui-theme: ${message}`)
     })
   }
@@ -130,12 +133,14 @@ export function apply(ctx: Context, config: Config = {}): void {
   // applies instead. The delay lets any pending service registration (and
   // its callback) land first — it no-ops once followActive is settled, and
   // stays inside the host's own 300ms pre-mount settings gate either way.
-  setTimeout(() => {
+  const fallbackTimer = setTimeout(() => {
     if (followActive === undefined && cordis.followSystem) {
       followActive = true
       startFollow()
     }
   }, FOLLOW_FALLBACK_MS)
+  fallbackTimer.unref?.()
+  ctx.effect(() => () => clearTimeout(fallbackTimer))
 
   startStatusLine(ctx, () => effective)
 }

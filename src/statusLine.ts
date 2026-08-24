@@ -100,6 +100,7 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
     const turns = new Map<object, number>()
     let current: object | undefined
     let dispose: (() => void) | undefined
+    let lastText: string | undefined
 
     const render = (): void => {
       try {
@@ -117,6 +118,8 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
           }
         }
         const text = parts.join(' · ')
+        if (text === lastText) return
+        lastText = text
         // The trailing identity must be the inject-scoped context (the same
         // activation the traceable binds as caller) — the plugin's outer ctx
         // is a different activation view and would be silently rejected.

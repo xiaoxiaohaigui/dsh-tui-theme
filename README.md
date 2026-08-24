@@ -109,7 +109,7 @@ rm ~/.dsh-tui/theme-follow.json                         # 可选：删除跟随�
 ## 开发
 
 ```sh
-pnpm install && pnpm build   # tsc -> lib/types/
+npm install && npm run build # tsc -> lib/types/
 npm run verify               # 沙盒测试（临时 HOME + 伪造 TTY，不碰真实 ~/.dsh-tui）
 ```
 

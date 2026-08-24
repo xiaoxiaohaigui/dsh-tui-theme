@@ -45,19 +45,29 @@ export declare function applyCachedFollow(dataDir: string): string | undefined;
  * Best effort: no TTY, an unresponsive terminal, or a parse failure just
  * leaves the previous state intact. Runs before the host's own stdin
  * parsing is mounted; raw mode is restored to whatever it was.
+ *
+ * Keystroke safety: the 'data' listener consumes every byte of the window
+ * (the terminal multiplexes replies and keypresses on one stream). Anything
+ * that is not part of the OSC 11 reply is re-emitted through stdin.emit on
+ * teardown, so input typed mid-window reaches the host parser intact.
  * @param dataDir - The host data directory (~/.dsh-tui).
+ * @param isActive - Live follow gate: a false return (follow turned off
+ *   mid-window) makes finish() skip the pref write — off preserves the
+ *   manual choice even for an in-flight detection.
  * @param stdout - Injectable for tests.
  * @param stdin - Injectable for tests.
  * @param setTimeoutFn - Injectable for tests.
  * @returns The detected light-ness, or undefined when unavailable.
  */
-export declare function refreshDetectedBackground(dataDir: string, stdout?: NodeJS.WriteStream, stdin?: NodeJS.ReadStream, setTimeoutFn?: typeof setTimeout): Promise<boolean | undefined>;
+export declare function refreshDetectedBackground(dataDir: string, isActive?: () => boolean, stdout?: NodeJS.WriteStream, stdin?: NodeJS.ReadStream, setTimeoutFn?: typeof setTimeout): Promise<boolean | undefined>;
 /**
  * The whole follow sequence for apply(): cached value now (pre-mount),
  * fresh detection for the next boot.
  * @param dataDir - The host data directory (~/.dsh-tui).
+ * @param isActive - Live follow gate, re-queried when an in-flight reply
+ *   lands (follow may be switched off in /settings during the window).
  * @param log - Info sink for the applied/refreshed outcomes.
  */
-export declare function runFollowSystem(dataDir: string, log: (message: string) => void): void;
+export declare function runFollowSystem(dataDir: string, isActive: () => boolean, log: (message: string) => void): void;
 export {};
 //# sourceMappingURL=autoTheme.d.ts.map

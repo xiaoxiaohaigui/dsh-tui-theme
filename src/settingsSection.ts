@@ -58,31 +58,39 @@ export function registerPinkSettings(
 ): void {
   ctx.inject(['settings'], settingsCtx => {
     const settings = (settingsCtx as Context & { settings: SettingsServiceLike }).settings
-    const scope = settings.register(
-      settingsNamespace('dsh-tui-theme'),
-      z.object({
-        followSystem: z.boolean(),
-        showGlyph: z.boolean(),
-        showClock: z.boolean(),
-        showTurns: z.boolean(),
-        statusScope: z.union(['pink-only', 'all-themes'] as const),
-      }),
-    )
+    try {
+      const scope = settings.register(
+        settingsNamespace('dsh-tui-theme'),
+        z.object({
+          followSystem: z.boolean(),
+          showGlyph: z.boolean(),
+          showClock: z.boolean(),
+          showTurns: z.boolean(),
+          statusScope: z.union(['pink-only', 'all-themes'] as const),
+        }),
+      )
 
-    const emit = (doc: unknown): void => {
-      if (doc === null || typeof doc !== 'object') return
-      const clean: PinkSettingsDoc = {}
-      for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
-        if (value !== undefined) (clean as Record<string, unknown>)[key] = value
+      const emit = (doc: unknown): void => {
+        if (doc === null || typeof doc !== 'object') return
+        const clean: PinkSettingsDoc = {}
+        for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
+          if (value !== undefined) (clean as Record<string, unknown>)[key] = value
+        }
+        onDoc(clean)
       }
-      onDoc(clean)
+      // Own the watcher on the inject-scoped ledger so it survives exactly as
+      // long as this activation (scope.watch's disposer is otherwise leaked).
+      settingsCtx.effect(() => {
+        emit(scope.get())
+        return scope.watch(emit)
+      })
+    } catch (error) {
+      // A duplicate registration (hot reload race) or a stricter host must
+      // not take the plugin — or the TUI — down.
+      settingsCtx.logger.warn(
+        `dsh-tui-pink-theme: settings namespace registration failed: ${String(error)}`,
+      )
     }
-    // Own the watcher on the inject-scoped ledger so it survives exactly as
-    // long as this activation (scope.watch's disposer is otherwise leaked).
-    settingsCtx.effect(() => {
-      emit(scope.get())
-      return scope.watch(emit)
-    })
   })
 
   ctx.inject(['tuiSettingsSections'], sectionsCtx => {
