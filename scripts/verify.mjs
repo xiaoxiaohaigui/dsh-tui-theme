@@ -243,5 +243,42 @@ const emit = (record, event, ...args) => {
   console.log('✓ follow: OSC 11 detect → cache → pink-day/pink-night pref, safe fallbacks')
 }
 
+// ── 6. statusEnabled: false silences the whole line ─────────────────────────
+{
+  const statusCalls = []
+  const { ctx } = makeStubCtx({ status: fakeStatus(statusCalls) })
+  apply(ctx, { statusEnabled: false })
+  assert.equal(statusCalls.length > 0, true, 'render still ran once')
+  // Every contribution is cleared (undefined), not rendered.
+  for (const [, text] of statusCalls) assert.equal(text, undefined)
+  console.log('✓ statusEnabled=false: the line contributes nothing')
+}
+
+// ── 7. followSystem honors the /settings user layer live ────────────────────
+{
+  const dataDir = join(sandboxHome, '.dsh-tui')
+  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
+  rmSync(join(dataDir, 'theme.json'), { force: true })
+  const settingsRecord = { registerCalls: [], watchers: [] }
+  const { ctx } = makeStubCtx({
+    status: fakeStatus([]),
+    sections: fakeSections([]),
+    settingsService: fakeSettingsService(settingsRecord, {}),
+  })
+  apply(ctx, { followSystem: true })
+  // Cordis layer on, empty user layer, no cache yet → no pref churn.
+  assert.equal(existsSync(join(dataDir, 'theme.json')), false)
+
+  // User disables follow via /settings; a stale cached flip must not write.
+  for (const w of settingsRecord.watchers) w({ followSystem: false })
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
+  assert.equal(existsSync(join(dataDir, 'theme.json')), false, 'disabled follow must not rewrite the pref')
+
+  // Re-enable → the cached background applies immediately.
+  for (const w of settingsRecord.watchers) w({ followSystem: true })
+  assert.equal(readThemePref(dataDir), 'pink-day')
+  console.log('✓ followSystem: /settings toggle decides live (off = pref preserved)')
+}
+
 console.log('\nAll plugin verifications passed.')
 console.log(`(sandbox used: ${sandboxHome} — the real home was never touched)`)

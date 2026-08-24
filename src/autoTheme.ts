@@ -6,9 +6,9 @@
  * ride it. This module gives pink-day/pink-night the same behavior from the
  * plugin side:
  *
- * - at apply() (which runs before the React tree mounts and reads
- *   ~/.dsh-tui/theme.json), the cached detection writes the resolved theme
- *   name into the pref synchronously — always in time for this boot;
+ * - the caller wires this from the settings inject callback (see index.ts):
+ *   that fires before the React tree mounts and reads ~/.dsh-tui/theme.json,
+ *   so the cached detection still decides this boot;
  * - a fresh OSC 11 query then refreshes the cache for the next boot. The
  *   very first enabling (or a system flip between boots) lands one boot
  *   late — the same cadence as the host's own "re-select auto or restart".
@@ -20,7 +20,6 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 /** The pair this feature switches between (light terminal → day). */
@@ -36,10 +35,6 @@ const DETECT_TIMEOUT_MS = 400
 interface FollowCache {
   light: boolean
   at: number
-}
-
-function homeDir(): string {
-  return homedir() || process.env.USERPROFILE || process.env.HOME || ''
 }
 
 function prefPath(dir: string): string {

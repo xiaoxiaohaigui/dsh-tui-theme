@@ -76,8 +76,12 @@ export function registerPinkSettings(
       }
       onDoc(clean)
     }
-    emit(scope.get())
-    scope.watch(emit)
+    // Own the watcher on the inject-scoped ledger so it survives exactly as
+    // long as this activation (scope.watch's disposer is otherwise leaked).
+    settingsCtx.effect(() => {
+      emit(scope.get())
+      return scope.watch(emit)
+    })
   })
 
   ctx.inject(['tuiSettingsSections'], sectionsCtx => {

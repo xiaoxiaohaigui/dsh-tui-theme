@@ -71,10 +71,12 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
       try {
         const eff = getEffective()
         const parts: string[] = []
-        if (eff.showGlyph) parts.push(GLYPH)
-        if (eff.showClock) parts.push(clockText())
-        if (eff.showTurns && current !== undefined) {
-          parts.push(`${turns.get(current) ?? 0}✦`)
+        if (eff.statusEnabled) {
+          if (eff.showGlyph) parts.push(GLYPH)
+          if (eff.showClock) parts.push(clockText())
+          if (eff.showTurns && current !== undefined) {
+            parts.push(`${turns.get(current) ?? 0}✦`)
+          }
         }
         const text = parts.join(' · ')
         // The trailing identity must be the inject-scoped context (the same
