@@ -111,6 +111,7 @@ rm ~/.dsh-tui/theme-follow.json                         # 可选：删除跟随�
 ```sh
 npm install && npm run build # tsc -> lib/types/
 npm run verify               # 沙盒测试（临时 HOME + 伪造 TTY，不碰真实 ~/.dsh-tui）
+npm run verify:host          # 可选：用已安装宿主及相邻 dsh-TUI 源码跑集成回归
 ```
 
 主题调色板改起来最直接：编辑 `themes/*.json` 后重新 `npm run verify`，再删掉 `~/.dsh-tui/themes/` 下对应文件让插件重装。

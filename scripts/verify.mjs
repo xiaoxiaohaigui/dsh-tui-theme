@@ -20,6 +20,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PassThrough } from 'node:stream'
 import assert from 'node:assert/strict'
 
 const sandboxHome = mkdtempSync(join(tmpdir(), 'pink-theme-verify-'))
@@ -94,6 +95,24 @@ const fakeSettingsService = (record, doc) => ({
 
 const emit = (record, event, ...args) => {
   for (const handler of record.handlers.get(event) ?? []) handler(...args)
+}
+
+// Scenarios below call apply() with followSystem on, which starts a real
+// OSC 11 detection against process.stdin/stdout. On an interactive terminal
+// that would write escape sequences to the user's screen and briefly flip
+// raw mode — mask the TTY flags so the detector bails before touching the
+// terminal (hermetic on CI and on a real TTY alike).
+function withMaskedTty(fn) {
+  const stdoutWas = process.stdout.isTTY
+  const stdinWas = process.stdin.isTTY
+  process.stdout.isTTY = false
+  process.stdin.isTTY = false
+  try {
+    return fn()
+  } finally {
+    process.stdout.isTTY = stdoutWas
+    process.stdin.isTTY = stdinWas
+  }
 }
 
 // ── 1. bare host: no seam present → theme assets still install (pure fs),
@@ -204,10 +223,11 @@ const emit = (record, event, ...args) => {
     setRawMode(on) { rawModeCalls.push(on); this.isRaw = on },
     isPaused: () => true,
     resume() {},
+    pause() {},
+    listenerCount() { return listeners.has('data') ? 1 : 0 },
     on(event, fn) { listeners.set(event, fn) },
     removeListener(event, fn) { listeners.delete(event) },
     unshift(buf) { unshifted.push(buf.toString('latin1')) },
-    emit() { return true },
   }
   const emitStdin = data => { listeners.get('data')?.(Buffer.from(data, 'latin1')) }
   const replyLator = () => {
@@ -248,11 +268,12 @@ const emit = (record, event, ...args) => {
   assert.equal(writes.length, 0)
 
   // Keystrokes arriving inside the window (before/after the reply) are
-  // replayed via unshift instead of being swallowed.
+  // replayed via unshift instead of being swallowed. A same-chunk DA1 reply
+  // belongs to this detector and must not leak into the replay.
   unshifted.length = 0
   fakeStdout.write = data => {
     writes.push(String(data))
-    queueMicrotask(() => emitStdin('hi\x1b]11;rgb:1111/2222/3333\x07there'))
+    queueMicrotask(() => emitStdin('hi\x1b]11;rgb:1111/2222/3333\x07\x1b[?62;22cthere'))
     return true
   }
   const light2 = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, setTimeout)
@@ -320,7 +341,7 @@ const emit = (record, event, ...args) => {
     sections: fakeSections([]),
     settingsService: fakeSettingsService(settingsRecord, {}),
   })
-  apply(ctx, { followSystem: true })
+  withMaskedTty(() => apply(ctx, { followSystem: true }))
   // Cordis layer on, empty user layer, no cache yet → no pref churn.
   assert.equal(existsSync(join(dataDir, 'theme.json')), false)
 
@@ -389,7 +410,7 @@ const emit = (record, event, ...args) => {
   const infos = []
   const { ctx, record } = makeStubCtx() // no settings service → backstop path
   ctx.logger.info = msg => infos.push(String(msg))
-  apply(ctx, { followSystem: true })
+  withMaskedTty(() => apply(ctx, { followSystem: true }))
   // Dispose before the 150ms backstop can fire.
   for (const dispose of record.disposers) dispose()
   await new Promise(r => setTimeout(r, 250))
@@ -399,6 +420,63 @@ const emit = (record, event, ...args) => {
     'disposed plugin must not start follow from the backstop timer',
   )
   console.log('✓ follow fallback timer: cleared on dispose, never fires post-teardown')
+}
+
+// ── 11. replay semantics on a REAL stream (R1) ─────────────────────────────
+// PassThrough gives true Readable semantics: flowing/paused, unshift,
+// listenerCount. Two cases:
+//   a. sole consumer — replay must park the bytes so a host mounted LATER
+//      (ink's pull-mode 'readable'+read() pump) retrieves them intact;
+//   b. host already listening — fan-out already delivered the keystroke, so
+//      finish() must NOT replay (a double write is worse than a loss).
+{
+  const dataDir = join(sandboxHome, '.dsh-tui')
+  const ticks = n => new Promise(r => { let i = 0; const t = () => (++i > n ? r() : setImmediate(t)); t() })
+  const makeStdin = () => Object.assign(new PassThrough(), {
+    isTTY: true,
+    isRaw: false,
+    setRawMode(on) { this.isRaw = on },
+  })
+
+  // (a) sole consumer: keystrokes around the reply park for the later host.
+  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
+  rmSync(join(dataDir, 'theme.json'), { force: true })
+  const stdinA = makeStdin()
+  const stdoutA = {
+    isTTY: true,
+    write: () => {
+      queueMicrotask(() => stdinA.write('hi\x1b]11;rgb:1111/2222/3333\x07there'))
+      return true
+    },
+  }
+  const lightA = await refreshDetectedBackground(dataDir, () => true, stdoutA, stdinA, setTimeout)
+  assert.equal(lightA, false)
+  await ticks(3)
+  const pulled = []
+  const pump = () => { let c; while ((c = stdinA.read()) !== null) pulled.push(c.toString()) }
+  stdinA.on('readable', pump)
+  pump()
+  await ticks(2)
+  assert.equal(pulled.join(''), 'hithere', 'replayed bytes must reach a later pull-mode host')
+
+  // (b) host already listening: no replay, no duplicate delivery.
+  const stdinB = makeStdin()
+  const hostGot = []
+  stdinB.on('data', c => hostGot.push(c.toString()))
+  const stdoutB = {
+    isTTY: true,
+    write: () => {
+      queueMicrotask(() => stdinB.write('k\x1b]11;rgb:ffff/ffff/ffff\x1b\\'))
+      return true
+    },
+  }
+  rmSync(join(dataDir, 'theme.json'), { force: true })
+  const lightB = await refreshDetectedBackground(dataDir, () => true, stdoutB, stdinB, setTimeout)
+  assert.equal(lightB, true)
+  await ticks(3)
+  assert.equal(hostGot.join(''), 'k\x1b]11;rgb:ffff/ffff/ffff\x1b\\', 'host saw the chunk exactly once')
+  assert.equal(readThemePref(dataDir), 'pink-day')
+  console.log('✓ replay semantics: parked bytes reach the later host; never double-written')
 }
 
 console.log('\nAll plugin verifications passed.')

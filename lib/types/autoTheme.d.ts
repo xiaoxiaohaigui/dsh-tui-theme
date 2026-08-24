@@ -46,10 +46,11 @@ export declare function applyCachedFollow(dataDir: string): string | undefined;
  * leaves the previous state intact. Runs before the host's own stdin
  * parsing is mounted; raw mode is restored to whatever it was.
  *
- * Keystroke safety: the 'data' listener consumes every byte of the window
- * (the terminal multiplexes replies and keypresses on one stream). Anything
- * that is not part of the OSC 11 reply is re-emitted through stdin.emit on
- * teardown, so input typed mid-window reaches the host parser intact.
+ * Keystroke safety: the 'data' listener sees every byte of the window (the
+ * terminal multiplexes replies and keypresses on one stream). When no other
+ * data consumer is present, non-reply bytes are paused and unshifted for the
+ * host's later pull-mode parser. If another consumer is already attached, it
+ * received the same chunk, so replay is skipped to avoid duplicate input.
  * @param dataDir - The host data directory (~/.dsh-tui).
  * @param isActive - Live follow gate: a false return (follow turned off
  *   mid-window) makes finish() skip the pref write — off preserves the

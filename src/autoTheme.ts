@@ -132,10 +132,11 @@ function isLightBackground(r: number, g: number, b: number): boolean {
  * leaves the previous state intact. Runs before the host's own stdin
  * parsing is mounted; raw mode is restored to whatever it was.
  *
- * Keystroke safety: the 'data' listener consumes every byte of the window
- * (the terminal multiplexes replies and keypresses on one stream). Anything
- * that is not part of the OSC 11 reply is re-emitted through stdin.emit on
- * teardown, so input typed mid-window reaches the host parser intact.
+ * Keystroke safety: the 'data' listener sees every byte of the window (the
+ * terminal multiplexes replies and keypresses on one stream). When no other
+ * data consumer is present, non-reply bytes are paused and unshifted for the
+ * host's later pull-mode parser. If another consumer is already attached, it
+ * received the same chunk, so replay is skipped to avoid duplicate input.
  * @param dataDir - The host data directory (~/.dsh-tui).
  * @param isActive - Live follow gate: a false return (follow turned off
  *   mid-window) makes finish() skip the pref write — off preserves the
@@ -166,22 +167,21 @@ export function refreshDetectedBackground(
     }
     let buffer = ''
     let settled = false
-    // Push the window's leftover bytes back for the host's input parser.
-    // unshift() returns them to the stream's internal buffer, which both the
-    // host's pull-mode 'readable' pump (mounted later) and any flowing-mode
-    // 'data' listener consume; the emit() fallback covers a torn-down stream
-    // where unshift refuses to work. Keystrokes typed during detection used
-    // to be silently dropped here. latin1 is byte-exact.
+    // Hand the window's leftover bytes to the host's input parser — ONLY
+    // while we are the sole consumer. Real stream semantics make both guards
+    // load-bearing: 'data' events fan out to every listener (replaying while
+    // another consumer is attached would double-type the keystroke), and
+    // unshift() only parks bytes in PAUSED mode — a still-flowing stream
+    // drains them away before the host's pull-mode pump even mounts. Losing
+    // the odd sub-window keystroke beats duplicating input. latin1 is
+    // byte-exact.
     const replayLeftover = (leftover: string): void => {
-      if (leftover === '') return
+      if (leftover === '' || stdin.listenerCount('data') !== 0) return
       try {
+        stdin.pause?.()
         stdin.unshift(Buffer.from(leftover, 'latin1'))
       } catch {
-        try {
-          stdin.emit('data', Buffer.from(leftover, 'latin1'))
-        } catch {
-          // Best effort: input preservation must never throw from a detector.
-        }
+        // Best effort: input preservation must never throw from a detector.
       }
     }
     const finish = (light: boolean | undefined, leftover: string): void => {
@@ -213,7 +213,11 @@ export function refreshDetectedBackground(
           channel8(match[2] ?? ''),
           channel8(match[3] ?? ''),
         )
-        const leftover = buffer.slice(0, match.index) + buffer.slice(match.index + match[0].length)
+        // Strip the DA1 reply too when both replies land in one chunk — it
+        // was ours, not user input.
+        const leftover = (
+          buffer.slice(0, match.index) + buffer.slice(match.index + match[0].length)
+        ).replace(DA1_REPLY, '')
         finish(light, leftover)
         return
       }

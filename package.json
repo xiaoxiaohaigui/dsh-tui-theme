@@ -25,7 +25,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "preverify": "npm run build",
-    "verify": "node scripts/verify.mjs"
+    "verify": "node scripts/verify.mjs",
+    "verify:host": "node scripts/headless-order-test.mjs && npx -y tsx scripts/validate-themes-against-host.mjs"
   },
   "license": "MIT",
   "author": "xiaoxiaohaigui",
