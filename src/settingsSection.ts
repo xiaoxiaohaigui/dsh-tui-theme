@@ -146,11 +146,11 @@ function sectionDefinition(cordis: StatusOptions & { followSystem?: boolean }): 
       },
       {
         path: ['showOnNonPinkThemes'],
-        label: 'Show on non-pink themes',
-        descriptions: { zh: '非粉主题下也显示' },
-        hint: 'The blossom line belongs to the pink palettes; off keeps it hidden while another theme is active.',
+        label: 'Show on any theme',
+        descriptions: { zh: '任意主题下显示' },
+        hint: 'The blossom line is exclusive to the pink palettes by default; enable to keep it visible under other themes.',
         hintDescriptions: {
-          zh: '状态行属于樱花粉主题；关闭时在其他主题下不显示。',
+          zh: '状态行默认为樱花粉主题专属；开启后在其他主题下同样显示。',
         },
         kind: 'boolean',
         format: (value: unknown): string => String(value ?? cordis.showOnNonPinkThemes),
