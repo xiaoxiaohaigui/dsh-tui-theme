@@ -65,6 +65,7 @@ export function registerPinkSettings(
         showGlyph: z.boolean(),
         showClock: z.boolean(),
         showTurns: z.boolean(),
+        showOnNonPinkThemes: z.boolean(),
       }),
     )
 
@@ -142,6 +143,17 @@ function sectionDefinition(cordis: StatusOptions & { followSystem?: boolean }): 
         hintDescriptions: { zh: '自本次启动以来当前会话的轮数。' },
         kind: 'boolean',
         format: (value: unknown): string => String(value ?? cordis.showTurns),
+      },
+      {
+        path: ['showOnNonPinkThemes'],
+        label: 'Show on non-pink themes',
+        descriptions: { zh: '非粉主题下也显示' },
+        hint: 'The blossom line belongs to the pink palettes; off keeps it hidden while another theme is active.',
+        hintDescriptions: {
+          zh: '状态行属于樱花粉主题；关闭时在其他主题下不显示。',
+        },
+        kind: 'boolean',
+        format: (value: unknown): string => String(value ?? cordis.showOnNonPinkThemes),
       },
     ],
   }

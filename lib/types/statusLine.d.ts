@@ -5,6 +5,11 @@
  * live turn count of the current session (seam one, read-only — nothing is
  * ever appended to the session log). The host owns rendering and
  * sanitization; text is scalars only.
+ *
+ * The line belongs to the pink palettes: by default it only renders while a
+ * pink theme is active (checked per render with the host's own theme
+ * precedence, so a mid-session /theme switch takes effect on the next tick);
+ * `showOnNonPinkThemes` opts it into every other theme too.
  * @module dsh-tui-pink-theme/statusLine
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -17,6 +22,8 @@ export interface StatusOptions {
     showClock?: boolean;
     /** Include the live turn count of the current session. */
     showTurns?: boolean;
+    /** Also render while a non-pink theme is active (default: pink only). */
+    showOnNonPinkThemes?: boolean;
 }
 /** Fully-resolved status knobs. */
 export type EffectiveStatus = Required<StatusOptions>;

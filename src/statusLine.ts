@@ -5,13 +5,21 @@
  * live turn count of the current session (seam one, read-only — nothing is
  * ever appended to the session log). The host owns rendering and
  * sanitization; text is scalars only.
+ *
+ * The line belongs to the pink palettes: by default it only renders while a
+ * pink theme is active (checked per render with the host's own theme
+ * precedence, so a mid-session /theme switch takes effect on the next tick);
+ * `showOnNonPinkThemes` opts it into every other theme too.
  * @module dsh-tui-pink-theme/statusLine
  */
 
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only import for the side effect: dsh-session's ambient declarations
 // put the session/* events onto cordis's Events interface.
 import type {} from '@deepseek-ai/dsh-session'
+import { homeDir } from './themeAssets.js'
+import { readThemePref } from './autoTheme.js'
 
 export interface StatusOptions {
   /** Master switch (cordis-config layer only; not surfaced in /settings). */
@@ -22,6 +30,8 @@ export interface StatusOptions {
   showClock?: boolean
   /** Include the live turn count of the current session. */
   showTurns?: boolean
+  /** Also render while a non-pink theme is active (default: pink only). */
+  showOnNonPinkThemes?: boolean
 }
 
 /** Fully-resolved status knobs. */
@@ -30,6 +40,26 @@ export type EffectiveStatus = Required<StatusOptions>
 const GLYPH = '✿'
 const STATUS_KEY = 'dsh-tui-theme'
 const CLOCK_TICK_MS = 15_000
+
+/** The bundled themes this garnish belongs to. */
+const PINK_THEMES: ReadonlySet<string> = new Set(['pink-night', 'pink-day', 'pink-ansi'])
+
+/**
+ * The active theme name by the host's own precedence: DSH_TUI_THEME first,
+ * then the persisted ~/.dsh-tui/theme.json pref. The unforced path (OSC 11
+ * auto-detection) only ever resolves to a builtin palette, never a pink one,
+ * so "no pref" means non-pink.
+ */
+function activeThemeName(dataDir: string): string | undefined {
+  const env = process.env.DSH_TUI_THEME
+  if (env !== undefined && env !== '') return env
+  return readThemePref(dataDir)
+}
+
+function isPinkThemeActive(dataDir: string): boolean {
+  const name = activeThemeName(dataDir)
+  return name !== undefined && PINK_THEMES.has(name)
+}
 
 /** Structural view of the host service; the real type lives in the host. */
 interface TuiStatusLike {
@@ -60,6 +90,7 @@ function clockText(): string {
  *   edits land live without restarting anything).
  */
 export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatus): void {
+  const dataDir = join(homeDir(), '.dsh-tui')
   ctx.inject(['tuiStatus'], statusCtx => {
     const status = (statusCtx as Context & { tuiStatus: TuiStatusLike }).tuiStatus
 
@@ -71,7 +102,11 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
       try {
         const eff = getEffective()
         const parts: string[] = []
-        if (eff.statusEnabled) {
+        // The line is pink garnish: off on other themes unless opted in.
+        // The theme check runs here (not once at startup) so a mid-session
+        // /theme switch lands on the next tick or session event.
+        const themeAllows = eff.showOnNonPinkThemes || isPinkThemeActive(dataDir)
+        if (eff.statusEnabled && themeAllows) {
           if (eff.showGlyph) parts.push(GLYPH)
           if (eff.showClock) parts.push(clockText())
           if (eff.showTurns && current !== undefined) {

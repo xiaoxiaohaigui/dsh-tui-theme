@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | **三套粉色主题** | 主题（静态资产） | `pink-night` 夜樱 / `pink-day` 昼樱 / `pink-ansi` 樱·ANSI，启动时自动装进 `~/.dsh-tui/themes/` |
 | **自动跟随背景** | 启动时序 | 检测终端/系统背景色（OSC 11，与宿主同阈值），在昼樱/夜樱间自动切换——pink 版的 auto |
-| **花符状态行** | `tuiStatus` | 输入框上方一行小装饰：✿ · 时钟 · 实时轮数 |
+| **花符状态行** | `tuiStatus` | 输入框上方一行小装饰：✿ · 时钟 · 实时轮数（默认仅粉主题下显示） |
 | **设置面板** | `tuiSettingsSections` | `/settings` 里一个可编辑区块，改完即时生效 |
 
 **明确不做的事**：不注册快捷键、不注册/修改任何命令、不拦截输入、不追加会话事件、不注入 system prompt。卸载即无痕（可选删除主题文件）。
@@ -79,6 +79,7 @@ dsh plugin --profile dsh-tui add -w /path/to/dsh-tui-theme
 | `showGlyph` | `true` | 花符：开 = ✿ 开头，关 = 不显示 |
 | `showClock` | `true` | 显示 HH:MM 时钟 |
 | `showTurns` | `true` | 显示当前会话轮数（`N✦`，自本次启动起计） |
+| `showOnNonPinkThemes` | `false` | 非粉主题下也显示状态行；关 = 仅在樱花粉三主题下显示（推荐保持关闭） |
 
 三项装饰全关时状态行整体消失。另有仅 profile 层的开关（`cordis.patch.yml`，不出现在 /settings）：`autoInstallThemes`、`statusEnabled`。
 

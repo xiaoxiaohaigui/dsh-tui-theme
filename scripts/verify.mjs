@@ -112,6 +112,9 @@ const emit = (record, event, ...args) => {
 // ── 2. full host: everything wired ──────────────────────────────────────────
 {
   rmSync(sandboxThemes, { recursive: true, force: true })
+  // A pink theme is active — the default policy hides the line otherwise.
+  mkdirSync(join(sandboxHome, '.dsh-tui'), { recursive: true })
+  writeFileSync(join(sandboxHome, '.dsh-tui', 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
   const statusCalls = []
   const sectionsCalls = []
   const settingsRecord = { registerCalls: [], watchers: [] }
@@ -144,7 +147,7 @@ const emit = (record, event, ...args) => {
   assert.equal(settingsRecord.registerCalls.length, 1)
   assert.equal(sectionsCalls.length, 1)
   assert.equal(sectionsCalls[0].ns, 'dsh-tui-theme')
-  assert.equal(sectionsCalls[0].fields.length, 4)
+  assert.equal(sectionsCalls[0].fields.length, 5)
 
   // A committed /settings edit lands live on the next render.
   for (const watcher of settingsRecord.watchers) {
@@ -278,6 +281,43 @@ const emit = (record, event, ...args) => {
   for (const w of settingsRecord.watchers) w({ followSystem: true })
   assert.equal(readThemePref(dataDir), 'pink-day')
   console.log('✓ followSystem: /settings toggle decides live (off = pref preserved)')
+}
+
+// ── 8. theme gating: the line belongs to the pink palettes ──────────────────
+{
+  const themePrefPath = join(sandboxHome, '.dsh-tui', 'theme.json')
+  writeFileSync(themePrefPath, JSON.stringify({ theme: 'pink-night' }, null, 2))
+  const statusCalls = []
+  const settingsRecord = { registerCalls: [], watchers: [] }
+  const { ctx, record } = makeStubCtx({
+    status: fakeStatus(statusCalls),
+    settingsService: fakeSettingsService(settingsRecord, {}),
+  })
+  apply(ctx)
+  const session = { id: 'g1' }
+
+  // Pink active → renders.
+  emit(record, 'session/event', session, { type: 'turn/end' })
+  assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 1✦$/)
+
+  // Non-pink theme active → hidden by default.
+  writeFileSync(themePrefPath, JSON.stringify({ theme: 'dark' }, null, 2))
+  emit(record, 'session/event', session, { type: 'turn/end' })
+  assert.equal(statusCalls.at(-1)[1], undefined)
+
+  // Opt in via /settings → shown on non-pink too (the turn count kept
+  // ticking while the line was hidden — turns count since the TUI started).
+  for (const w of settingsRecord.watchers) w({ showOnNonPinkThemes: true })
+  emit(record, 'session/event', session, { type: 'turn/end' })
+  assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 3✦$/)
+
+  // Host precedence: DSH_TUI_THEME wins over the dark pref.
+  process.env.DSH_TUI_THEME = 'pink-day'
+  for (const w of settingsRecord.watchers) w({})
+  emit(record, 'session/event', session, { type: 'turn/end' })
+  assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 4✦$/)
+  delete process.env.DSH_TUI_THEME
+  console.log('✓ theme gating: pink-only by default, opt-in shows everywhere')
 }
 
 console.log('\nAll plugin verifications passed.')

@@ -42,6 +42,7 @@ export const Config: Schemastery<Config> = z.object({
   showGlyph: z.boolean().default(true),
   showClock: z.boolean().default(true),
   showTurns: z.boolean().default(true),
+  showOnNonPinkThemes: z.boolean().default(false),
 })
 
 /** Fully-resolved knobs: hardcoded defaults, overlaid by cordis config. */
@@ -57,6 +58,7 @@ const DEFAULTS: EffectiveConfig = {
   showGlyph: true,
   showClock: true,
   showTurns: true,
+  showOnNonPinkThemes: false,
 }
 
 /**
@@ -81,6 +83,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     showGlyph: config.showGlyph ?? DEFAULTS.showGlyph,
     showClock: config.showClock ?? DEFAULTS.showClock,
     showTurns: config.showTurns ?? DEFAULTS.showTurns,
+    showOnNonPinkThemes: config.showOnNonPinkThemes ?? DEFAULTS.showOnNonPinkThemes,
   }
 
   if (cordis.autoInstallThemes) {

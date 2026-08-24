@@ -13,3 +13,4 @@
         showGlyph: true
         showClock: true
         showTurns: true
+        showOnNonPinkThemes: false
