@@ -307,7 +307,7 @@ const emit = (record, event, ...args) => {
 
   // Opt in via /settings → shown on non-pink too (the turn count kept
   // ticking while the line was hidden — turns count since the TUI started).
-  for (const w of settingsRecord.watchers) w({ showOnNonPinkThemes: true })
+  for (const w of settingsRecord.watchers) w({ statusScope: 'all-themes' })
   emit(record, 'session/event', session, { type: 'turn/end' })
   assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 3✦$/)
 

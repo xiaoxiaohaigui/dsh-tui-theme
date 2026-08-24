@@ -9,10 +9,12 @@
  * The line belongs to the pink palettes: by default it only renders while a
  * pink theme is active (checked per render with the host's own theme
  * precedence, so a mid-session /theme switch takes effect on the next tick);
- * `showOnNonPinkThemes` opts it into every other theme too.
+ * `statusScope: 'all-themes'` opts it into every other theme too.
  * @module dsh-tui-pink-theme/statusLine
  */
 import type { Context } from '@deepseek-ai/cordis';
+/** Which themes the blossom line renders under. */
+export type StatusScope = 'pink-only' | 'all-themes';
 export interface StatusOptions {
     /** Master switch (cordis-config layer only; not surfaced in /settings). */
     statusEnabled?: boolean;
@@ -22,8 +24,8 @@ export interface StatusOptions {
     showClock?: boolean;
     /** Include the live turn count of the current session. */
     showTurns?: boolean;
-    /** Also render while a non-pink theme is active (default: pink only). */
-    showOnNonPinkThemes?: boolean;
+    /** Theme scope of the line (default: the pink palettes only). */
+    statusScope?: StatusScope;
 }
 /** Fully-resolved status knobs. */
 export type EffectiveStatus = Required<StatusOptions>;

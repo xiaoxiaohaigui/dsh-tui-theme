@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { installBundledThemes, homeDir } from './themeAssets.js'
-import { startStatusLine, type EffectiveStatus } from './statusLine.js'
+import { startStatusLine, type EffectiveStatus, type StatusScope } from './statusLine.js'
 import { runFollowSystem } from './autoTheme.js'
 import { registerPinkSettings, type PinkSettingsDoc } from './settingsSection.js'
 
@@ -42,7 +42,7 @@ export const Config: Schemastery<Config> = z.object({
   showGlyph: z.boolean().default(true),
   showClock: z.boolean().default(true),
   showTurns: z.boolean().default(true),
-  showOnNonPinkThemes: z.boolean().default(false),
+  statusScope: z.union(['pink-only', 'all-themes'] as const).default('pink-only'),
 })
 
 /** Fully-resolved knobs: hardcoded defaults, overlaid by cordis config. */
@@ -58,7 +58,7 @@ const DEFAULTS: EffectiveConfig = {
   showGlyph: true,
   showClock: true,
   showTurns: true,
-  showOnNonPinkThemes: false,
+  statusScope: 'pink-only' as StatusScope,
 }
 
 /**
@@ -83,7 +83,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     showGlyph: config.showGlyph ?? DEFAULTS.showGlyph,
     showClock: config.showClock ?? DEFAULTS.showClock,
     showTurns: config.showTurns ?? DEFAULTS.showTurns,
-    showOnNonPinkThemes: config.showOnNonPinkThemes ?? DEFAULTS.showOnNonPinkThemes,
+    statusScope: config.statusScope ?? DEFAULTS.statusScope,
   }
 
   if (cordis.autoInstallThemes) {

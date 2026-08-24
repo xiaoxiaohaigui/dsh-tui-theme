@@ -79,7 +79,7 @@ dsh plugin --profile dsh-tui add -w /path/to/dsh-tui-theme
 | `showGlyph` | `true` | 花符：开 = ✿ 开头，关 = 不显示 |
 | `showClock` | `true` | 显示 HH:MM 时钟 |
 | `showTurns` | `true` | 显示当前会话轮数（`N✦`，自本次启动起计） |
-| `showOnNonPinkThemes` | `false` | 任意主题下显示状态行；默认仅樱花粉主题下显示（推荐保持关闭） |
+| `statusScope` | `pink-only` | 状态行展示：`pink-only` 仅樱花粉主题 / `all-themes` 所有主题 |
 
 三项装饰全关时状态行整体消失。另有仅 profile 层的开关（`cordis.patch.yml`，不出现在 /settings）：`autoInstallThemes`、`statusEnabled`。
 

@@ -9,7 +9,7 @@
  * The line belongs to the pink palettes: by default it only renders while a
  * pink theme is active (checked per render with the host's own theme
  * precedence, so a mid-session /theme switch takes effect on the next tick);
- * `showOnNonPinkThemes` opts it into every other theme too.
+ * `statusScope: 'all-themes'` opts it into every other theme too.
  * @module dsh-tui-pink-theme/statusLine
  */
 
@@ -21,6 +21,9 @@ import type {} from '@deepseek-ai/dsh-session'
 import { homeDir } from './themeAssets.js'
 import { readThemePref } from './autoTheme.js'
 
+/** Which themes the blossom line renders under. */
+export type StatusScope = 'pink-only' | 'all-themes'
+
 export interface StatusOptions {
   /** Master switch (cordis-config layer only; not surfaced in /settings). */
   statusEnabled?: boolean
@@ -30,8 +33,8 @@ export interface StatusOptions {
   showClock?: boolean
   /** Include the live turn count of the current session. */
   showTurns?: boolean
-  /** Also render while a non-pink theme is active (default: pink only). */
-  showOnNonPinkThemes?: boolean
+  /** Theme scope of the line (default: the pink palettes only). */
+  statusScope?: StatusScope
 }
 
 /** Fully-resolved status knobs. */
@@ -105,7 +108,7 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
         // The line is pink garnish: off on other themes unless opted in.
         // The theme check runs here (not once at startup) so a mid-session
         // /theme switch lands on the next tick or session event.
-        const themeAllows = eff.showOnNonPinkThemes || isPinkThemeActive(dataDir)
+        const themeAllows = eff.statusScope === 'all-themes' || isPinkThemeActive(dataDir)
         if (eff.statusEnabled && themeAllows) {
           if (eff.showGlyph) parts.push(GLYPH)
           if (eff.showClock) parts.push(clockText())

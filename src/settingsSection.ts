@@ -65,7 +65,7 @@ export function registerPinkSettings(
         showGlyph: z.boolean(),
         showClock: z.boolean(),
         showTurns: z.boolean(),
-        showOnNonPinkThemes: z.boolean(),
+        statusScope: z.union(['pink-only', 'all-themes'] as const),
       }),
     )
 
@@ -145,15 +145,20 @@ function sectionDefinition(cordis: StatusOptions & { followSystem?: boolean }): 
         format: (value: unknown): string => String(value ?? cordis.showTurns),
       },
       {
-        path: ['showOnNonPinkThemes'],
-        label: 'Show on any theme',
-        descriptions: { zh: '任意主题下显示' },
-        hint: 'The blossom line is exclusive to the pink palettes by default; enable to keep it visible under other themes.',
+        path: ['statusScope'],
+        label: 'Status line display',
+        descriptions: { zh: '状态行展示' },
+        hint: 'The blossom line is exclusive to the pink palettes by default; all-themes keeps it visible under other themes.',
         hintDescriptions: {
-          zh: '状态行默认为樱花粉主题专属；开启后在其他主题下同样显示。',
+          zh: '状态行默认为樱花粉主题专属；所有主题时在其他主题下同样显示。',
         },
-        kind: 'boolean',
-        format: (value: unknown): string => String(value ?? cordis.showOnNonPinkThemes),
+        kind: 'select',
+        options: [
+          { value: 'pink-only', label: 'Pink themes only', descriptions: { zh: '樱花粉主题' } },
+          { value: 'all-themes', label: 'All themes', descriptions: { zh: '所有主题' } },
+        ],
+        format: (value: unknown): string =>
+          typeof value === 'string' ? value : (cordis.statusScope ?? 'pink-only'),
       },
     ],
   }
