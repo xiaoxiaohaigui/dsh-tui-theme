@@ -1,6 +1,6 @@
 /**
  * Validate bundled themes against the real dsh-TUI source implementation.
- * DSH_TUI_SOURCE_ROOT may point at a dsh-TUI source checkout.
+ * DSH_TUI_SOURCE_ROOT must point at a dsh-TUI source checkout.
  *
  * Run with: npx -y tsx scripts/validate-themes-against-host.mjs
  */
@@ -11,15 +11,24 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 
 const pluginRoot = fileURLToPath(new URL('..', import.meta.url))
-const hostRoot = resolve(process.env.DSH_TUI_SOURCE_ROOT ?? join(pluginRoot, '..', 'dsh-TUI'))
+const sourceRoot = process.env.DSH_TUI_SOURCE_ROOT
+if (sourceRoot === undefined || sourceRoot === '') {
+  throw new Error('DSH_TUI_SOURCE_ROOT must point at a dsh-TUI source checkout for this host theme validation.')
+}
+const hostRoot = resolve(sourceRoot)
 const customThemePath = join(hostRoot, 'src', 'customTheme.ts')
 const themePath = join(hostRoot, 'src', 'theme.ts')
 
 if (!existsSync(customThemePath) || !existsSync(themePath)) {
-  console.log(`SKIP host theme validation: dsh-TUI sources not found at ${hostRoot}`)
-  console.log('Set DSH_TUI_SOURCE_ROOT to a dsh-TUI source checkout.')
-  process.exit(0)
+  throw new Error(`dsh-TUI sources not found at ${hostRoot}`)
 }
+
+const hostPackagePath = join(hostRoot, 'package.json')
+if (!existsSync(hostPackagePath)) {
+  throw new Error(`dsh-TUI package metadata not found at ${hostPackagePath}`)
+}
+const hostPackage = JSON.parse(readFileSync(hostPackagePath, 'utf8'))
+assert.equal(hostPackage.version, '0.9.2', `expected dsh-TUI source 0.9.2, received ${hostPackage.version}`)
 
 const sandboxHome = mkdtempSync(join(tmpdir(), 'pink-theme-host-validate-'))
 process.env.USERPROFILE = sandboxHome

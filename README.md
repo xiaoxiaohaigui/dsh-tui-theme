@@ -5,7 +5,7 @@
 | 个性化 | 接缝 | 说明 |
 | --- | --- | --- |
 | **三套粉色主题** | 主题（静态资产） | `pink-night` 夜樱 / `pink-day` 昼樱 / `pink-ansi` 樱·ANSI，启动时自动装进 `~/.dsh-tui/themes/` |
-| **自动跟随背景** | 启动时序 | 检测终端/系统背景色（OSC 11，与宿主同阈值），在昼樱/夜樱间自动切换——pink 版的 auto |
+| **缓存背景跟随** | 设置 + 本地缓存 | 可选地应用已有 `theme-follow.json` 的昼樱/夜樱结果；不直接读取终端输入或发送 OSC 查询 |
 | **花符状态行** | `tuiStatus` | 输入框上方一行小装饰：✿ · 时钟 · 实时轮数（默认仅粉主题下显示） |
 | **设置面板** | `tuiSettingsSections` | `/settings` 里一个可编辑区块，改完即时生效 |
 
@@ -15,7 +15,7 @@
 
 | 主题 | 基底 | 风格 |
 | --- | --- | --- |
-| `pink-night` 夜樱 | dark | 深梅紫底、玫瑰粉强调、粉鲸鱼吉祥物，96 键全覆盖 |
+| `pink-night` 夜樱 | dark | 深梅紫底、玫瑰粉强调、粉鲸鱼吉祥物，95 键全覆盖 |
 | `pink-day` 昼樱 | light | 象牙粉底、墨梅正文、柔和玫瑰强调（已通过宿主浅色身份判定） |
 | `pink-ansi` 樱·ANSI | dark-ansi | 16 色 ANSI 回退，品牌色映射到 magenta 系 |
 
@@ -25,39 +25,53 @@
 
 ## 截图
 
-实测于 dsh-tui 0.9.0：
+实测于 dsh-tui 0.9.2：
 
 | 昼樱 `pink-day` | 夜樱 `pink-night` |
 | :---: | :---: |
 | ![pink-day 主题界面](docs/screenshots/pink-day.png) | ![pink-night 主题界面](docs/screenshots/pink-night.png) |
 
-`/settings` 里的 pink-theme 区块（跟随终端背景 / 花符 / 时钟 / 轮数，保存即时生效）：
+`/settings` 里的 pink-theme 区块（已缓存背景 / 花符 / 时钟 / 轮数，保存即时生效）：
 
 ![pink-theme 设置区块](docs/screenshots/settings.png)
 
 > 图中底栏上下文进度条的蓝色分段与 ❯ 提示符是宿主硬编码的，见下文[宿主限制](#受宿主限制目前无法定制的部分)。
 
-## 自动跟随终端背景
+## 缓存背景跟随
 
-设置里的“跟随终端背景”开启后（本部署默认开启）：
+`dsh-TUI 0.9.2` 没有向插件公开安全的终端查询接缝。为了不与宿主的 stdin/raw-mode 生命周期竞争，插件不会直接发送 OSC 11，也不会读取终端输入。
 
-- 每次启动检测终端背景（跟随系统主题的终端会随系统深浅变化），亮 → `pink-day`，暗 → `pink-night`，写入 `~/.dsh-tui/theme.json`，与宿主 `auto` 伪主题同款行为、同一亮度阈值；
-- 检测结果缓存在 `~/.dsh-tui/theme-follow.json`，因此切换在**启动瞬间**就生效；首次开启或系统刚翻转后的那次启动可能滞后一拍（与宿主 auto “重新选择或重启后跟上”一致）；
-- 开启此功能后 `/theme` 的选择由插件接管（每次启动都会按背景覆写）；关闭它即可恢复手动选择；
+“使用已缓存的终端背景”开启后：
+
+- 启动时读取 `~/.dsh-tui/theme-follow.json` 中已有的 `light` 结果，亮 → `pink-day`，暗 → `pink-night`，并将选择写入 `~/.dsh-tui/theme.json`；
+- 不存在缓存时完全保留当前 `/theme` 选择；0.4.0 不会自行创建或刷新缓存；
+- 默认关闭。该缓存可由之前的兼容版本留下；未来 dsh-TUI 提供宿主拥有的查询接缝后，插件才会安全地恢复刷新能力；
+- 开启后该缓存会在启动时覆盖 `/theme` 的持久选择；关闭即可恢复手动选择；
 - `DSH_TUI_THEME` 环境变量仍然最优先（宿主行为，插件不覆盖环境变量）。
 
 ## 安装
 
 ```sh
 # 方式一：从 npm（已发布）
-dsh plugin --profile dsh-tui add -w dsh-tui-theme
+dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
 
-# 方式二：从 GitHub
-dsh plugin --profile dsh-tui add -w github:xiaoxiaohaigui/dsh-tui-theme
-
-# 方式三：本地路径（开发/自用）
-dsh plugin --profile dsh-tui add -w /path/to/dsh-tui-theme
+# 方式二：本地 tarball（开发/自用；不要直接安装源码目录）
+cd /path/to/dsh-tui-theme
+npm run build
+npm pack
+dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-0.4.0.tgz
 ```
+
+不要以本地源码目录作为依赖安装：其开发 `node_modules` 可能与 dsh-TUI 宿主解析出不同的 Cordis/DSH framework instance，造成插件无法注册服务。
+
+### 升级
+
+```sh
+# npm 已发布版本：请求最新版本并刷新 profile 依赖
+dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
+```
+
+插件只在主题文件缺失时复制，绝不覆盖你编辑过的 `~/.dsh-tui/themes/pink-*.json`。升级若需要采用包内的新主题资产，请先备份自己的修改，再删除对应主题文件并重启 dsh-TUI 让插件重装。
 
 重启 dsh-TUI 后插件自动把三套主题复制进 `~/.dsh-tui/themes/`（**仅缺失时复制，绝不覆盖你已有的同名文件**），然后：
 
@@ -75,7 +89,7 @@ dsh plugin --profile dsh-tui add -w /path/to/dsh-tui-theme
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `followSystem` | 部署默认开 | 跟随终端背景：昼樱 ↔ 夜樱自动切换 |
+| `followSystem` | `false` | 启动时应用已缓存的终端背景结果（昼樱 ↔ 夜樱）；0.4.0 不刷新缓存 |
 | `showGlyph` | `true` | 花符：开 = ✿ 开头，关 = 不显示 |
 | `showClock` | `true` | 显示 HH:MM 时钟 |
 | `showTurns` | `true` | 显示当前会话轮数（`N✦`，自本次启动起计） |
@@ -85,7 +99,7 @@ dsh plugin --profile dsh-tui add -w /path/to/dsh-tui-theme
 
 ## 受宿主限制、目前无法定制的部分
 
-以下元素的颜色/形态由 dsh-TUI 宿主**硬编码**，不读取任何主题键，主题 JSON 与插件接缝都覆盖不到（dsh-TUI 0.9.0 实测）：
+以下元素的颜色/形态由 dsh-TUI 宿主**硬编码**，不读取任何主题键，主题 JSON 与插件接缝都覆盖不到（dsh-TUI 0.9.2 实测）：
 
 | 元素 | 现状 | 位置（宿主源码） |
 | --- | --- | --- |
@@ -101,22 +115,32 @@ dsh plugin --profile dsh-tui add -w /path/to/dsh-tui-theme
 ## 卸载
 
 ```sh
-dsh plugin --profile dsh-tui remove -w dsh-tui-theme    # 移除插件
-rm ~/.dsh-tui/themes/pink-{night,day,ansi}.json         # 可选：删除主题文件
-rm ~/.dsh-tui/theme-follow.json                         # 可选：删除跟随缓存
+# 先在 dsh-TUI 内切换到非 pink-* 主题，例如：
+/theme auto
+
+# 再移除插件和可选的本地主题资产
+dsh plugin --profile dsh-tui remove -w dsh-tui-theme
+rm ~/.dsh-tui/themes/pink-{night,day,ansi}.json
+rm ~/.dsh-tui/theme-follow.json
 ```
 
 ## 开发
 
 ```sh
-npm install && npm run build # tsc -> lib/types/
-npm run verify               # 沙盒测试（临时 HOME + 伪造 TTY，不碰真实 ~/.dsh-tui）
-npm run verify:host          # 可选：用已安装宿主及相邻 dsh-TUI 源码跑集成回归
+npm install
+npm run build
+npm run verify
+npm run verify:package
+DSH_TUI_ADAPTER_DIR=/path/to/dsh-TUI/lib/types/dsh-adapter \
+DSH_TUI_SOURCE_ROOT=/path/to/dsh-TUI-source \
+npm run verify:host
 ```
+
+`verify:host` 必须显式指向待兼容的宿主 adapter 与源码；缺少其中任一项会失败，避免把跳过误报为验证成功。
 
 主题调色板改起来最直接：编辑 `themes/*.json` 后重新 `npm run verify`，再删掉 `~/.dsh-tui/themes/` 下对应文件让插件重装。
 
 ## 兼容性
 
-- **dsh-TUI 版本下限：0.8.8**（全功能，含状态行与设置面板；0.9.0 实测）。更旧的宿主缺 `dsh-tui-extensions` 扩展面时，插件自动降级为“仅安装三套主题 + 背景跟随”，不报错。
+- **dsh-TUI 版本下限：0.8.8**（状态行与设置面板；0.9.2 实测）。更旧的宿主缺 `dsh-tui-extensions` 扩展面时，插件自动降级为“仅安装三套主题”，不报错。
 - Node `^22.19 || >=24`，纯 ESM，MIT。

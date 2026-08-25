@@ -20,7 +20,7 @@ import type { StatusOptions } from './statusLine.js';
 export type PinkSettingsDoc = StatusOptions & {
     /** Install bundled theme JSONs on boot (cordis-config layer only). */
     autoInstallThemes?: boolean;
-    /** Follow the terminal/system background: pink-day ↔ pink-night. */
+    /** Apply a cached terminal background: pink-day <-> pink-night. */
     followSystem?: boolean;
 };
 /**

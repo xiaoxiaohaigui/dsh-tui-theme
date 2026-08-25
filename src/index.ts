@@ -4,8 +4,8 @@
  * 个性化全部走既有接缝，不注册快捷键、不注册命令、不拦截任何输入：
  * - 接缝四（主题）：内置三套粉色 JSON（pink-night / pink-day / pink-ansi），
  *   启动时复制进 ~/.dsh-tui/themes/（仅缺失时，绝不覆盖用户已有文件）；
- * - 自动跟随：检测终端/系统背景色（OSC 11，与宿主同阈值），在昼樱/夜樱
- *   间自动切换——pink 版的 auto；
+ * - 缓存背景跟随：安全应用已有的终端背景缓存，在昼樱/夜樱间切换；
+ *   dsh-TUI 未提供插件终端查询接缝时，不直接读写 stdin、raw mode 或 OSC 11；
  * - 接缝十一（状态行）：输入框上方一行小装饰（✿ · 时钟 · 本轮轮数）；
  * - 接缝六（设置区块）：/settings 里一个可编辑面板，即时生效。
  *
@@ -100,47 +100,36 @@ export function apply(ctx: Context, config: Config = {}): void {
   // lands live through scope.watch; both override the hardcoded defaults.
   let effective: EffectiveConfig = cordis
 
-  // Background follow honors the MERGED knob (cordis layer overlaid by the
-  // /settings user layer), so the decision cannot be taken synchronously at
-  // apply(): the user layer is only readable once the settings service
-  // answers. The settings callback still fires before the host's React tree
-  // mounts (the host gates its own mount on the same service, probed
-  // against 0.9.0), so the pref write decides this boot exactly like a sync
-  // write would, and toggling followSystem in /settings re-decides live.
+  // Background follow applies only an existing cache. dsh-TUI v0.9.2 exposes
+  // no plugin terminal-query seam, so a theme plugin must not compete with
+  // Ink's stdin reader or raw-mode lease. The /settings layer still determines
+  // whether the cached result may control this startup.
   let followActive: boolean | undefined
   const dataDir = join(homeDir(), '.dsh-tui')
-  // Live gate for in-flight detections: a reply that lands after the user
-  // turned follow off must not rewrite the pref.
-  const followEnabled = (): boolean => followActive === true
-  const startFollow = (): void => {
-    runFollowSystem(dataDir, followEnabled, message => {
-      ctx.logger.info(`dsh-tui-theme: ${message}`)
-    })
+  const applyFollow = (): void => {
+    runFollowSystem(
+      dataDir,
+      () => followActive === true,
+      message => {
+        ctx.logger.info(`dsh-tui-theme: ${message}`)
+      },
+    )
   }
   registerPinkSettings(ctx, cordis, doc => {
     effective = { ...cordis, ...doc }
     if (effective.followSystem !== followActive) {
       followActive = effective.followSystem
       if (followActive) {
-        startFollow()
+        applyFollow()
       } else {
         ctx.logger.info('dsh-tui-theme: follow: disabled, manual /theme choice preserved')
       }
     }
   })
-  // Degradation backstop for hosts that never provide a settings service:
-  // the inject callback never fires there, so the cordis-layer decision
-  // applies instead. The delay lets any pending service registration (and
-  // its callback) land first — it no-ops once followActive is settled, and
-  // stays inside the host's own 300ms pre-mount settings gate either way.
-  const fallbackTimer = setTimeout(() => {
-    if (followActive === undefined && cordis.followSystem) {
-      followActive = true
-      startFollow()
-    }
-  }, FOLLOW_FALLBACK_MS)
-  fallbackTimer.unref?.()
-  ctx.effect(() => () => clearTimeout(fallbackTimer))
+  // Cached following needs the merged settings document; without the settings
+  // seam the plugin keeps the user's existing theme choice and degrades to
+  // static assets rather than applying a profile default before that document
+  // could arrive.
 
   startStatusLine(ctx, () => effective)
 }

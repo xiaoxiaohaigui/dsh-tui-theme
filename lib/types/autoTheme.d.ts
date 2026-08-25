@@ -1,21 +1,14 @@
 /**
- * Terminal-background follow: the pink pair's `auto`.
+ * Cached terminal-background follow for the pink theme pair.
  *
- * The host's `auto` pseudo-theme resolves builtin light/dark via an OSC 11
- * query at mount and keeps the result in memory only — user themes cannot
- * ride it. This module gives pink-day/pink-night the same behavior from the
- * plugin side:
- *
- * - the caller wires this from the settings inject callback (see index.ts):
- *   that fires before the React tree mounts and reads ~/.dsh-tui/theme.json,
- *   so the cached detection still decides this boot;
- * - a fresh OSC 11 query then refreshes the cache for the next boot. The
- *   very first enabling (or a system flip between boots) lands one boot
- *   late — the same cadence as the host's own "re-select auto or restart".
+ * dsh-TUI v0.9.2 does not expose a plugin terminal-query seam. Plugins must
+ * therefore not create their own stdin consumers or raw-mode leases: the host
+ * owns both through Ink. This module only applies a previously stored result
+ * before mount. A future host-owned query service can refresh that cache
+ * without changing the preference format used here.
  *
  * The pref write mirrors the host's writeThemePref byte-for-byte
- * ({"theme": name}, 2-space indent) and the light test mirrors the host's
- * luminance threshold so both sides always agree on light/dark.
+ * ({"theme": name}, 2-space indent).
  * @module dsh-tui-theme/autoTheme
  */
 interface FollowCache {
@@ -26,49 +19,21 @@ interface FollowCache {
 export declare function readThemePref(dataDir: string): string | undefined;
 /** Persist the theme pref in the host's exact format. */
 export declare function writeThemePref(name: string, dataDir: string): boolean;
-/** The cached detection, if one exists. */
+/** The cached terminal-background result, if a prior compatible writer stored one. */
 export declare function readFollowCache(dataDir: string): FollowCache | undefined;
-/**
- * Map a detected background to this pair's theme name.
- * @param light - True for a light terminal background.
- */
+/** Map a cached background to this pair's theme name. */
 export declare function themeForBackground(light: boolean): string;
 /**
- * Apply the follow behavior synchronously from cache: writes the resolved
- * theme name into the pref when it differs. Safe before mount — pure fs.
- * @param dataDir - The host data directory (~/.dsh-tui).
- * @returns The applied theme name, or undefined when no cache exists yet.
+ * Apply the cached follow behavior synchronously before mount. It returns the
+ * resolved name only when the existing preference already matched or the new
+ * preference committed successfully.
  */
 export declare function applyCachedFollow(dataDir: string): string | undefined;
 /**
- * Query the terminal background (OSC 11) and refresh the cache + pref.
- * Best effort: no TTY, an unresponsive terminal, or a parse failure just
- * leaves the previous state intact. Runs before the host's own stdin
- * parsing is mounted; raw mode is restored to whatever it was.
- *
- * Keystroke safety: the 'data' listener sees every byte of the window (the
- * terminal multiplexes replies and keypresses on one stream). When no other
- * data consumer is present, non-reply bytes are paused and unshifted for the
- * host's later pull-mode parser. If another consumer is already attached, it
- * received the same chunk, so replay is skipped to avoid duplicate input.
- * @param dataDir - The host data directory (~/.dsh-tui).
- * @param isActive - Live follow gate: a false return (follow turned off
- *   mid-window) makes finish() skip the pref write — off preserves the
- *   manual choice even for an in-flight detection.
- * @param stdout - Injectable for tests.
- * @param stdin - Injectable for tests.
- * @param setTimeoutFn - Injectable for tests.
- * @returns The detected light-ness, or undefined when unavailable.
+ * Apply a previously detected background without touching terminal I/O. A
+ * future host-owned terminal query service may refresh theme-follow.json; this
+ * plugin intentionally does not access stdin, stdout, or raw mode directly.
  */
-export declare function refreshDetectedBackground(dataDir: string, isActive?: () => boolean, stdout?: NodeJS.WriteStream, stdin?: NodeJS.ReadStream, setTimeoutFn?: typeof setTimeout): Promise<boolean | undefined>;
-/**
- * The whole follow sequence for apply(): cached value now (pre-mount),
- * fresh detection for the next boot.
- * @param dataDir - The host data directory (~/.dsh-tui).
- * @param isActive - Live follow gate, re-queried when an in-flight reply
- *   lands (follow may be switched off in /settings during the window).
- * @param log - Info sink for the applied/refreshed outcomes.
- */
-export declare function runFollowSystem(dataDir: string, isActive: () => boolean, log: (message: string) => void): void;
+export declare function runFollowSystem(dataDir: string, isCurrent: () => boolean, log: (message: string) => void): void;
 export {};
 //# sourceMappingURL=autoTheme.d.ts.map

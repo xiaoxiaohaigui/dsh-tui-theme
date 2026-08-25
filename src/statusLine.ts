@@ -129,14 +129,14 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
       }
     }
 
-    ctx.on('session/event', (session, event) => {
+    statusCtx.on('session/event', (session, event) => {
       current = session
       if (event?.type === 'turn/end') {
         turns.set(session, (turns.get(session) ?? 0) + 1)
       }
       render()
     })
-    ctx.on('session/disposed', session => {
+    statusCtx.on('session/disposed', session => {
       turns.delete(session)
       if (current === session) current = undefined
       render()

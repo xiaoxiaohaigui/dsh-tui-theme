@@ -16,29 +16,42 @@
  *
  * Run with: npm run verify   (after npm run build)
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { PassThrough } from 'node:stream'
+import { createRequire, syncBuiltinESMExports } from 'node:module'
 import assert from 'node:assert/strict'
 
 const sandboxHome = mkdtempSync(join(tmpdir(), 'pink-theme-verify-'))
+const originalThemeOverride = process.env.DSH_TUI_THEME
+const restoreThemeOverride = () => {
+  if (originalThemeOverride === undefined) {
+    delete process.env.DSH_TUI_THEME
+  } else {
+    process.env.DSH_TUI_THEME = originalThemeOverride
+  }
+}
+delete process.env.DSH_TUI_THEME
+process.once('exit', restoreThemeOverride)
 process.env.USERPROFILE = sandboxHome
 process.env.HOME = sandboxHome
 
 const pluginRoot = fileURLToPath(new URL('..', import.meta.url))
+const require = createRequire(import.meta.url)
+const builtinFs = require('node:fs')
 const sandboxThemes = join(sandboxHome, '.dsh-tui', 'themes')
 
 const { name, apply } = await import('../lib/types/index.js')
 const { installBundledThemes } = await import('../lib/types/themeAssets.js')
+const { startStatusLine } = await import('../lib/types/statusLine.js')
 const {
   themeForBackground,
   readThemePref,
   writeThemePref,
   readFollowCache,
   applyCachedFollow,
-  refreshDetectedBackground,
+  runFollowSystem,
 } = await import('../lib/types/autoTheme.js')
 
 assert.equal(name, 'dsh-tui-theme')
@@ -95,24 +108,6 @@ const fakeSettingsService = (record, doc) => ({
 
 const emit = (record, event, ...args) => {
   for (const handler of record.handlers.get(event) ?? []) handler(...args)
-}
-
-// Scenarios below call apply() with followSystem on, which starts a real
-// OSC 11 detection against process.stdin/stdout. On an interactive terminal
-// that would write escape sequences to the user's screen and briefly flip
-// raw mode — mask the TTY flags so the detector bails before touching the
-// terminal (hermetic on CI and on a real TTY alike).
-function withMaskedTty(fn) {
-  const stdoutWas = process.stdout.isTTY
-  const stdinWas = process.stdin.isTTY
-  process.stdout.isTTY = false
-  process.stdin.isTTY = false
-  try {
-    return fn()
-  } finally {
-    process.stdout.isTTY = stdoutWas
-    process.stdin.isTTY = stdinWas
-  }
 }
 
 // ── 1. bare host: no seam present → theme assets still install (pure fs),
@@ -205,118 +200,32 @@ function withMaskedTty(fn) {
   console.log('✓ autoInstallThemes=false: leaves the themes dir untouched')
 }
 
-// ── 5. background follow: detection, cache, pref rewriting ─────────────────
+// ── 5. cached background follow: no terminal I/O ───────────────────────────
 {
   const dataDir = join(sandboxHome, '.dsh-tui')
+  mkdirSync(dataDir, { recursive: true })
   assert.equal(themeForBackground(true), 'pink-day')
   assert.equal(themeForBackground(false), 'pink-night')
+  assert.equal(applyCachedFollow(dataDir), undefined, 'no cache preserves the existing choice')
 
-  // Fake TTY streams: the "terminal" answers OSC 11 with a light background.
-  const writes = []
-  const unshifted = []
-  const listeners = new Map()
-  const rawModeCalls = []
-  const fakeStdout = { isTTY: true, write: data => { writes.push(String(data)); return true } }
-  const fakeStdin = {
-    isTTY: true,
-    isRaw: false,
-    setRawMode(on) { rawModeCalls.push(on); this.isRaw = on },
-    isPaused: () => true,
-    resume() {},
-    pause() {},
-    listenerCount() { return listeners.has('data') ? 1 : 0 },
-    on(event, fn) { listeners.set(event, fn) },
-    removeListener(event, fn) { listeners.delete(event) },
-    unshift(buf) { unshifted.push(buf.toString('latin1')) },
-  }
-  const emitStdin = data => { listeners.get('data')?.(Buffer.from(data, 'latin1')) }
-  const replyLator = () => {
-    queueMicrotask(() => emitStdin('\x1b]11;rgb:f6f3/f6f3/f6ed\x1b\\'))
-  }
-
-  // No reply → timeout → undefined, nothing written.
-  {
-    const immediateTimeout = cb => { queueMicrotask(cb); return 0 }
-    const light = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, immediateTimeout)
-    assert.equal(light, undefined)
-    assert.equal(readFollowCache(dataDir), undefined)
-    assert.equal(readThemePref(dataDir), undefined)
-  }
-  assert.deepEqual(rawModeCalls, [true, false], 'raw mode restored after the attempt')
-
-  // Light reply → cache + pref written, raw mode restored.
-  fakeStdout.write = data => { writes.push(String(data)); queueMicrotask(replyLator); return true }
-  const light = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, setTimeout)
-  assert.equal(light, true)
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
+  assert.equal(applyCachedFollow(dataDir), 'pink-day')
   assert.equal(readFollowCache(dataDir).light, true)
   assert.equal(readThemePref(dataDir), 'pink-day')
-  assert.match(writes.at(-1), /^\x1b\]11;\?\x07\x1b\[c$/, 'OSC 11 query + DA1 sentinel')
-  assert.deepEqual(rawModeCalls, [true, false, true, false])
 
-  // Cached dark flip rewrites the pref synchronously (pre-mount path).
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: false, at: 1 }))
-  const applied = applyCachedFollow(dataDir)
-  assert.equal(applied, 'pink-night')
-  assert.equal(readThemePref(dataDir), 'pink-night')
+  // Same value -> no rewrite churn (mtime-agnostic: pref already matches).
+  assert.equal(applyCachedFollow(dataDir), 'pink-day')
 
-  // Same value → no rewrite churn (mtime-agnostic: pref already matches).
-  assert.equal(applyCachedFollow(dataDir), 'pink-night')
+  // The follow runner only applies cache and reports its result. It accepts no
+  // stdin/stdout handles and cannot create a raw-mode lease or input listener.
+  const logs = []
+  runFollowSystem(dataDir, () => true, message => logs.push(message))
+  assert.deepEqual(logs, ['follow: applied cached background (pink-day)'])
 
-  // Non-TTY → undefined immediately, no writes.
-  writes.length = 0
-  assert.equal(await refreshDetectedBackground(dataDir, () => true, { isTTY: false }, fakeStdin, setTimeout), undefined)
-  assert.equal(writes.length, 0)
-
-  // Keystrokes arriving inside the window (before/after the reply) are
-  // replayed via unshift instead of being swallowed. A same-chunk DA1 reply
-  // belongs to this detector and must not leak into the replay.
-  unshifted.length = 0
-  fakeStdout.write = data => {
-    writes.push(String(data))
-    queueMicrotask(() => emitStdin('hi\x1b]11;rgb:1111/2222/3333\x07\x1b[?62;22cthere'))
-    return true
-  }
-  const light2 = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, setTimeout)
-  assert.equal(light2, false)
-  assert.equal(unshifted.join(''), 'hithere', 'non-reply bytes replayed for the host parser')
-
-  // DA1 before any OSC 11 reply → early exit, nothing written.
-  unshifted.length = 0
-  fakeStdout.write = data => {
-    writes.push(String(data))
-    queueMicrotask(() => emitStdin('\x1b[?62;22c'))
-    return true
-  }
-  const light3 = await refreshDetectedBackground(dataDir, () => true, fakeStdout, fakeStdin, setTimeout)
-  assert.equal(light3, undefined)
-
-  // Follow turned off mid-window → detection still resolves but the pref
-  // write is skipped (off = manual choice preserved).
-  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
-  rmSync(join(dataDir, 'theme.json'), { force: true })
-  let active = true
-  fakeStdout.write = data => {
-    writes.push(String(data))
-    queueMicrotask(() => {
-      active = false
-      emitStdin('\x1b]11;rgb:ffff/ffff/ffff\x1b\\')
-    })
-    return true
-  }
-  const light4 = await refreshDetectedBackground(dataDir, () => active, fakeStdout, fakeStdin, setTimeout)
-  assert.equal(light4, true)
-  assert.equal(existsSync(join(dataDir, 'theme.json')), false, 'in-flight reply must not write after off')
-  assert.equal(existsSync(join(dataDir, 'theme-follow.json')), false)
-  // Same window with follow still on → the write lands.
-  active = true
-  fakeStdout.write = data => {
-    writes.push(String(data))
-    queueMicrotask(() => emitStdin('\x1b]11;rgb:ffff/ffff/ffff\x1b\\'))
-    return true
-  }
-  await refreshDetectedBackground(dataDir, () => active, fakeStdout, fakeStdin, setTimeout)
-  assert.equal(readThemePref(dataDir), 'pink-day')
-  console.log('✓ follow: OSC 11 detect → cache → pref, keystroke replay, mid-window off')
+  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
+  runFollowSystem(dataDir, () => false, message => logs.push(message))
+  assert.equal(readThemePref(dataDir), 'dark', 'inactive follow preserves manual choice')
+  console.log('✓ follow: cached background applies without terminal I/O')
 }
 
 // ── 6. statusEnabled: false silences the whole line ─────────────────────────
@@ -330,7 +239,7 @@ function withMaskedTty(fn) {
   console.log('✓ statusEnabled=false: the line contributes nothing')
 }
 
-// ── 7. followSystem honors the /settings user layer live ────────────────────
+// ── 7. followSystem honors the /settings user layer with cached state ───────
 {
   const dataDir = join(sandboxHome, '.dsh-tui')
   rmSync(join(dataDir, 'theme-follow.json'), { force: true })
@@ -341,8 +250,8 @@ function withMaskedTty(fn) {
     sections: fakeSections([]),
     settingsService: fakeSettingsService(settingsRecord, {}),
   })
-  withMaskedTty(() => apply(ctx, { followSystem: true }))
-  // Cordis layer on, empty user layer, no cache yet → no pref churn.
+  apply(ctx, { followSystem: true })
+  // Cordis layer on, empty user layer, no cache yet -> no pref churn.
   assert.equal(existsSync(join(dataDir, 'theme.json')), false)
 
   // User disables follow via /settings; a stale cached flip must not write.
@@ -385,11 +294,19 @@ function withMaskedTty(fn) {
   assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 3✦$/)
 
   // Host precedence: DSH_TUI_THEME wins over the dark pref.
-  process.env.DSH_TUI_THEME = 'pink-day'
-  for (const w of settingsRecord.watchers) w({})
-  emit(record, 'session/event', session, { type: 'turn/end' })
-  assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 4✦$/)
-  delete process.env.DSH_TUI_THEME
+  const baselineThemeOverride = process.env.DSH_TUI_THEME
+  try {
+    process.env.DSH_TUI_THEME = 'pink-day'
+    for (const w of settingsRecord.watchers) w({})
+    emit(record, 'session/event', session, { type: 'turn/end' })
+    assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 4✦$/)
+  } finally {
+    if (baselineThemeOverride === undefined) {
+      delete process.env.DSH_TUI_THEME
+    } else {
+      process.env.DSH_TUI_THEME = baselineThemeOverride
+    }
+  }
   console.log('✓ theme gating: pink-only by default, opt-in shows everywhere')
 }
 
@@ -405,78 +322,130 @@ function withMaskedTty(fn) {
   console.log('✓ hostile settings service: registration failure warns, never propagates')
 }
 
-// ── 10. follow fallback timer: lifecycle-managed (M5) ──────────────────────
-{
-  const infos = []
-  const { ctx, record } = makeStubCtx() // no settings service → backstop path
-  ctx.logger.info = msg => infos.push(String(msg))
-  withMaskedTty(() => apply(ctx, { followSystem: true }))
-  // Dispose before the 150ms backstop can fire.
-  for (const dispose of record.disposers) dispose()
-  await new Promise(r => setTimeout(r, 250))
-  assert.equal(
-    infos.some(m => m.includes('follow:')),
-    false,
-    'disposed plugin must not start follow from the backstop timer',
-  )
-  console.log('✓ follow fallback timer: cleared on dispose, never fires post-teardown')
-}
-
-// ── 11. replay semantics on a REAL stream (R1) ─────────────────────────────
-// PassThrough gives true Readable semantics: flowing/paused, unshift,
-// listenerCount. Two cases:
-//   a. sole consumer — replay must park the bytes so a host mounted LATER
-//      (ink's pull-mode 'readable'+read() pump) retrieves them intact;
-//   b. host already listening — fan-out already delivered the keystroke, so
-//      finish() must NOT replay (a double write is worse than a loss).
+// ── 10. missing settings: never override a manual theme choice ─────────────
 {
   const dataDir = join(sandboxHome, '.dsh-tui')
-  const ticks = n => new Promise(r => { let i = 0; const t = () => (++i > n ? r() : setImmediate(t)); t() })
-  const makeStdin = () => Object.assign(new PassThrough(), {
-    isTTY: true,
-    isRaw: false,
-    setRawMode(on) { this.isRaw = on },
-  })
+  mkdirSync(dataDir, { recursive: true })
+  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
+  const { ctx } = makeStubCtx()
+  apply(ctx, { followSystem: true })
+  assert.equal(readThemePref(dataDir), 'dark', 'without settings, cached follow must not override manual choice')
+  console.log('✓ missing settings: cached follow leaves the manual choice intact')
+}
 
-  // (a) sole consumer: keystrokes around the reply park for the later host.
-  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
-  rmSync(join(dataDir, 'theme.json'), { force: true })
-  const stdinA = makeStdin()
-  const stdoutA = {
-    isTTY: true,
-    write: () => {
-      queueMicrotask(() => stdinA.write('hi\x1b]11;rgb:1111/2222/3333\x07there'))
-      return true
-    },
+// ── 11. filesystem commits: atomic replacement and exclusive creation ───────
+{
+  const dataDir = join(sandboxHome, '.dsh-tui')
+  mkdirSync(dataDir, { recursive: true })
+  const pref = join(dataDir, 'theme.json')
+  writeFileSync(pref, JSON.stringify({ theme: 'dark' }, null, 2))
+  const originalRename = builtinFs.renameSync
+  try {
+    builtinFs.renameSync = () => { throw new Error('rename blocked') }
+    syncBuiltinESMExports()
+    assert.equal(writeThemePref('pink-day', dataDir), false)
+    assert.equal(readThemePref(dataDir), 'dark', 'failed commit leaves the prior JSON readable')
+    assert.equal(
+      readdirSync(dataDir).some(file => file.startsWith('.theme.json.') && file.endsWith('.tmp')),
+      false,
+      'failed commit removes its temporary file',
+    )
+  } finally {
+    builtinFs.renameSync = originalRename
+    syncBuiltinESMExports()
   }
-  const lightA = await refreshDetectedBackground(dataDir, () => true, stdoutA, stdinA, setTimeout)
-  assert.equal(lightA, false)
-  await ticks(3)
-  const pulled = []
-  const pump = () => { let c; while ((c = stdinA.read()) !== null) pulled.push(c.toString()) }
-  stdinA.on('readable', pump)
-  pump()
-  await ticks(2)
-  assert.equal(pulled.join(''), 'hithere', 'replayed bytes must reach a later pull-mode host')
 
-  // (b) host already listening: no replay, no duplicate delivery.
-  const stdinB = makeStdin()
-  const hostGot = []
-  stdinB.on('data', c => hostGot.push(c.toString()))
-  const stdoutB = {
-    isTTY: true,
-    write: () => {
-      queueMicrotask(() => stdinB.write('k\x1b]11;rgb:ffff/ffff/ffff\x1b\\'))
-      return true
-    },
+  const targetDir = join(sandboxHome, 'race-target')
+  const originalWrite = builtinFs.writeFileSync
+  let racedFile
+  try {
+    builtinFs.writeFileSync = (path, data, options) => {
+      const target = String(path)
+      if (racedFile === undefined && target.startsWith(targetDir) && options?.flag === 'wx') {
+        racedFile = target.split(/[\\/]/).at(-1)
+        originalWrite(path, '{ "user": true }', { flag: 'wx' })
+      }
+      return originalWrite(path, data, options)
+    }
+    syncBuiltinESMExports()
+    const result = installBundledThemes(targetDir, join(pluginRoot, 'themes'))
+    assert.equal(typeof racedFile, 'string', 'the test injected a competing creator')
+    assert.equal(result.skipped.includes(racedFile), true, 'EEXIST is a protected user-file skip')
+    assert.deepEqual(JSON.parse(readFileSync(join(targetDir, racedFile), 'utf8')), { user: true })
+  } finally {
+    builtinFs.writeFileSync = originalWrite
+    syncBuiltinESMExports()
   }
-  rmSync(join(dataDir, 'theme.json'), { force: true })
-  const lightB = await refreshDetectedBackground(dataDir, () => true, stdoutB, stdinB, setTimeout)
-  assert.equal(lightB, true)
-  await ticks(3)
-  assert.equal(hostGot.join(''), 'k\x1b]11;rgb:ffff/ffff/ffff\x1b\\', 'host saw the chunk exactly once')
-  assert.equal(readThemePref(dataDir), 'pink-day')
-  console.log('✓ replay semantics: parked bytes reach the later host; never double-written')
+  console.log('✓ filesystem commits: failed atomic writes preserve JSON; competing theme creation skips')
+}
+
+// ── 12. status injection: session handlers die with tuiStatus activation ────
+{
+  const outerHandlers = new Map()
+  let activate
+  const outerCtx = {
+    on(event, handler) {
+      const handlers = outerHandlers.get(event) ?? []
+      handlers.push(handler)
+      outerHandlers.set(event, handlers)
+      return () => {}
+    },
+    inject(_deps, callback) { activate = callback },
+  }
+  const makeActivation = calls => {
+    const handlers = new Map()
+    const disposers = []
+    return {
+      tuiStatus: fakeStatus(calls),
+      on(event, handler) {
+        const eventHandlers = handlers.get(event) ?? []
+        eventHandlers.push(handler)
+        handlers.set(event, eventHandlers)
+        return () => handlers.set(event, eventHandlers.filter(entry => entry !== handler))
+      },
+      effect(factory) {
+        const dispose = factory()
+        if (typeof dispose === 'function') disposers.push(dispose)
+      },
+      emit(event, ...args) {
+        for (const handler of handlers.get(event) ?? []) handler(...args)
+      },
+      dispose() {
+        handlers.clear()
+        for (const dispose of disposers) dispose()
+      },
+      handlerCount(event) { return (handlers.get(event) ?? []).length },
+    }
+  }
+  const effective = {
+    statusEnabled: true,
+    showGlyph: false,
+    showClock: false,
+    showTurns: true,
+    statusScope: 'all-themes',
+  }
+  startStatusLine(outerCtx, () => effective)
+
+  const firstCalls = []
+  const first = makeActivation(firstCalls)
+  activate(first)
+  assert.equal(outerHandlers.size, 0, 'status activation must not register outer-owned session handlers')
+  assert.equal(first.handlerCount('session/event'), 1)
+  first.emit('session/event', { id: 'first' }, { type: 'turn/end' })
+  assert.equal(firstCalls.at(-1)[1], '1✦')
+  first.dispose()
+  first.emit('session/event', { id: 'stale' }, { type: 'turn/end' })
+  assert.equal(firstCalls.at(-1)[1], '1✦', 'disposed activation ignores later session events')
+
+  const secondCalls = []
+  const second = makeActivation(secondCalls)
+  activate(second)
+  second.emit('session/event', { id: 'second' }, { type: 'turn/end' })
+  assert.equal(secondCalls.at(-1)[1], '1✦', 'replacement activation owns the only live handler')
+  assert.equal(firstCalls.at(-1)[1], '1✦')
+  second.dispose()
+  console.log('✓ status lifecycle: session handlers follow tuiStatus activation')
 }
 
 console.log('\nAll plugin verifications passed.')

@@ -1,7 +1,7 @@
 {
   "name": "dsh-tui-theme",
-  "version": "0.3.2",
-  "description": "Sakura-pink themes for dsh-TUI with terminal-background auto-follow (pink-day/pink-night), a blossom status line, and a /settings section. No shortcuts, no commands.",
+  "version": "0.4.0",
+  "description": "Sakura-pink themes for dsh-TUI with optional cached background follow (pink-day/pink-night), a blossom status line, and a /settings section. No shortcuts, no commands.",
   "type": "module",
   "main": "lib/types/index.js",
   "types": "lib/types/index.d.ts",
@@ -17,6 +17,7 @@
     "lib",
     "themes",
     "docs",
+    "scripts",
     "cordis.patch.yml"
   ],
   "engines": {
@@ -24,9 +25,11 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "preverify": "npm run build",
     "verify": "node scripts/verify.mjs",
-    "verify:host": "node scripts/headless-order-test.mjs && npx -y tsx scripts/validate-themes-against-host.mjs"
+    "verify:package": "node scripts/verify-package.mjs",
+    "verify:host": "node scripts/headless-order-test.mjs && node --import tsx/esm scripts/validate-themes-against-host.mjs",
+    "release:check": "npm run build && npm run verify && npm run verify:package",
+    "prepack": "npm run release:check"
   },
   "license": "MIT",
   "author": "xiaoxiaohaigui",
@@ -52,19 +55,19 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1"
-  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-session": "^0.1.0-rc.6 || ^0.1.1-rc.1",
-    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6 || ^0.1.1-rc.1"
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6 || ^0.1.1-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-session": "^0.1.0-rc.6 || ^0.1.1-rc.1",
     "@deepseek-ai/dsh-settings": "^0.1.0-rc.6 || ^0.1.1-rc.1",
+    "@deepseek-ai/schemastery": "^3.18.1",
     "@types/node": "^22.0.0",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3"
   }
 }

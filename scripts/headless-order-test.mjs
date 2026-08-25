@@ -2,35 +2,31 @@
  * End-to-end order test with the installed dsh-TUI services. Composes this
  * plugin before the extension services to exercise late service injection.
  *
- * DSH_TUI_ADAPTER_DIR may point at dsh-TUI's lib/types/dsh-adapter directory.
+ * DSH_TUI_ADAPTER_DIR must point at dsh-TUI's lib/types/dsh-adapter directory.
  */
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
 
-const originalHome = homedir()
 const pluginRoot = fileURLToPath(new URL('..', import.meta.url))
-const adapter = process.env.DSH_TUI_ADAPTER_DIR ?? join(
-  originalHome,
-  '.dsh',
-  'profiles',
-  'dsh-tui',
-  'node_modules',
-  '@deepseek-harness-tui',
-  'dsh-tui',
-  'lib',
-  'types',
-  'dsh-adapter',
-)
+const adapter = process.env.DSH_TUI_ADAPTER_DIR
+if (adapter === undefined || adapter === '') {
+  throw new Error('DSH_TUI_ADAPTER_DIR must point at dsh-TUI lib/types/dsh-adapter for this host integration test.')
+}
 
 if (!existsSync(join(adapter, 'extensions.js'))) {
-  console.log(`SKIP headless order test: dsh-TUI adapter not found at ${adapter}`)
-  console.log('Set DSH_TUI_ADAPTER_DIR to the host lib/types/dsh-adapter directory.')
-  process.exit(0)
+  throw new Error(`dsh-TUI adapter not found at ${adapter}`)
 }
+
+const hostPackagePath = join(adapter, '..', '..', '..', 'package.json')
+if (!existsSync(hostPackagePath)) {
+  throw new Error(`dsh-TUI package metadata not found above adapter at ${adapter}`)
+}
+const hostPackage = JSON.parse(readFileSync(hostPackagePath, 'utf8'))
+assert.equal(hostPackage.version, '0.9.2', `expected dsh-TUI adapter 0.9.2, received ${hostPackage.version}`)
 
 const sandbox = mkdtempSync(join(tmpdir(), 'pink-order-'))
 process.env.USERPROFILE = sandbox
