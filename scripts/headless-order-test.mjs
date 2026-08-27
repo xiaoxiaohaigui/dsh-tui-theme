@@ -3,6 +3,10 @@
  * plugin before the extension services to exercise late service injection.
  *
  * DSH_TUI_ADAPTER_DIR must point at dsh-TUI's lib/types/dsh-adapter directory.
+ * Script-side floor: the adapter must be a built dsh-TUI >= 0.9.0 — the
+ * settings-sections module and its getHostSettingsSections probe landed there.
+ * Set DSH_TUI_EXPECTED_VERSION only when an explicit release baseline needs
+ * to be pinned; ordinary development verifies the supplied host as-is.
  */
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -10,6 +14,13 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
+import { assertSettingsContract, SETTINGS_NAMESPACE } from './expected-settings-contract.mjs'
+
+// The tuiStatus contribution key and the effect-ledger resource id. Deliberately
+// a separate constant from SETTINGS_NAMESPACE: they hold the same value today
+// (see src/pluginId.ts), but this assertion pins that equality while the status
+// snapshot / ledger filters below must never silently track the namespace.
+const STATUS_CONTRIBUTION_KEY = SETTINGS_NAMESPACE
 
 const pluginRoot = fileURLToPath(new URL('..', import.meta.url))
 const adapter = process.env.DSH_TUI_ADAPTER_DIR
@@ -26,7 +37,13 @@ if (!existsSync(hostPackagePath)) {
   throw new Error(`dsh-TUI package metadata not found above adapter at ${adapter}`)
 }
 const hostPackage = JSON.parse(readFileSync(hostPackagePath, 'utf8'))
-assert.equal(hostPackage.version, '0.9.2', `expected dsh-TUI adapter 0.9.2, received ${hostPackage.version}`)
+assert.match(hostPackage.version, /^\d+\.\d+\.\d+(?:[-+].+)?$/u, 'host adapter must declare a version')
+const expectedVersion = process.env.DSH_TUI_EXPECTED_VERSION
+if (expectedVersion !== undefined && expectedVersion !== '') {
+  assert.equal(hostPackage.version, expectedVersion, `expected dsh-TUI adapter ${expectedVersion}, received ${hostPackage.version}`)
+} else {
+  console.log(`* host adapter ${hostPackage.version} (no explicit version pin)`)
+}
 
 const sandbox = mkdtempSync(join(tmpdir(), 'pink-order-'))
 process.env.USERPROFILE = sandbox
@@ -36,32 +53,80 @@ const dataDir = join(sandbox, '.dsh-tui')
 mkdirSync(dataDir, { recursive: true })
 writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
 
+// Guard the script-side floor explicitly: settings-sections.js first shipped
+// in dsh-TUI 0.9.0, so a bare ERR_MODULE_NOT_FOUND from a dynamic import
+// would hide the real reason a host tree is too old for this test.
+const settingsSectionsPath = join(adapter, 'settings-sections.js')
+if (!existsSync(settingsSectionsPath)) {
+  throw new Error(
+    `dsh-TUI adapter at ${adapter} has no settings-sections.js; this integration test needs a host >= 0.9.0`,
+  )
+}
+
 const req = createRequire(join(adapter, 'extensions.js'))
 const { Context } = await import(pathToFileURL(req.resolve('@deepseek-ai/cordis')).href)
 const extensions = await import(pathToFileURL(join(adapter, 'extensions.js')).href)
 const ledgerModule = await import(pathToFileURL(join(adapter, 'effect-ledger.js')).href)
 const statusModule = await import(pathToFileURL(join(adapter, 'status.js')).href)
+const settingsSectionsModule = await import(pathToFileURL(settingsSectionsPath).href)
 const pink = await import(pathToFileURL(join(pluginRoot, 'lib', 'types', 'index.js')).href)
 
 const app = new Context()
 await app.plugin(ledgerModule.default)
 await app.plugin(pink)
 await app.plugin(extensions.default ?? extensions)
-await new Promise(resolve => setTimeout(resolve, 300))
+await app.plugin(settingsSectionsModule.default ?? settingsSectionsModule)
 
-const ledger = join(dataDir, 'effect-ledger.jsonl')
-const pinkBinds = existsSync(ledger)
-  ? readFileSync(ledger, 'utf8').trim().split('\n')
-      .filter(Boolean)
-      .map(line => JSON.parse(line))
-      .filter(entry => entry.resource?.id === 'dsh-tui-theme')
-  : []
-const runtime = app.get('tuiStatus')
-const snapshot = statusModule.getHostStatusStore(runtime)?.getSnapshot()
+// The late injections resolve asynchronously; poll for every observable
+// outcome instead of sleeping a fixed wall-clock delay.
+const READY_TIMEOUT_MS = 5_000
+const POLL_INTERVAL_MS = 25
+const collectBinds = () => {
+  const ledger = join(dataDir, 'effect-ledger.jsonl')
+  return existsSync(ledger)
+    ? readFileSync(ledger, 'utf8').trim().split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line))
+        .filter(entry => entry.resource?.id === STATUS_CONTRIBUTION_KEY)
+    : []
+}
+const readState = () => {
+  const runtime = app.get('tuiStatus')
+  const settingsRuntime = app.get('tuiSettingsSections')
+  const settingsHost = settingsSectionsModule.getHostSettingsSections(settingsRuntime)
+  return {
+    pinkBinds: collectBinds(),
+    snapshot: statusModule.getHostStatusStore(runtime)?.getSnapshot(),
+    settingsSection: settingsHost?.list().find(section => section.ns === SETTINGS_NAMESPACE),
+  }
+}
 
-assert.ok(pinkBinds.length > 0, 'plugin must bind through the late status service')
-assert.ok(
-  snapshot?.some?.(entry => entry.key === 'dsh-tui-theme'),
-  'status store must contain the plugin contribution',
+let state = readState()
+const deadline = Date.now() + READY_TIMEOUT_MS
+while (
+  (state.pinkBinds.length === 0 ||
+    !state.snapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY) ||
+    state.settingsSection === undefined) &&
+  Date.now() < deadline
+) {
+  await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
+  state = readState()
+}
+
+const { pinkBinds, snapshot, settingsSection } = state
+assert.equal(
+  STATUS_CONTRIBUTION_KEY,
+  SETTINGS_NAMESPACE,
+  'the status contribution key must stay equal to the settings namespace (src/pluginId.ts)',
 )
-console.log(`✓ headless order: ${pinkBinds.length} ledger bind(s), visible status contribution`)
+assert.ok(pinkBinds.length > 0, `plugin must bind through the late status service within ${READY_TIMEOUT_MS}ms`)
+assert.ok(
+  snapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY),
+  `status store must contain the plugin contribution within ${READY_TIMEOUT_MS}ms`,
+)
+assert.ok(
+  settingsSection,
+  `plugin must register its /settings section through the late settings service within ${READY_TIMEOUT_MS}ms`,
+)
+assertSettingsContract(assert, settingsSection)
+console.log(`OK headless order: ${pinkBinds.length} ledger bind(s), status contribution, settings section`)

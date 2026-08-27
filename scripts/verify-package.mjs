@@ -32,6 +32,8 @@ for (const required of [
   'lib/types/index.d.ts',
   'lib/types/autoTheme.js',
   'lib/types/autoTheme.d.ts',
+  'lib/types/pluginId.js',
+  'lib/types/pluginId.d.ts',
   'lib/types/settingsSection.js',
   'lib/types/settingsSection.d.ts',
   'lib/types/statusLine.js',
@@ -48,6 +50,7 @@ for (const required of [
   'scripts/verify-package.mjs',
   'scripts/headless-order-test.mjs',
   'scripts/validate-themes-against-host.mjs',
+  'scripts/expected-settings-contract.mjs',
 ]) {
   assert.ok(files.has(required), `published package must include ${required}`)
 }

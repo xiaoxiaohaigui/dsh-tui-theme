@@ -1,5 +1,5 @@
 /**
- * Hermetic verification for dsh-tui-pink-theme (no TTY, no real HOME).
+ * Hermetic verification for dsh-tui-theme (no TTY, no real HOME).
  *
  * Points HOME/USERPROFILE at a throwaway sandbox BEFORE importing anything
  * (the same technique the host's scripts/verify-themes.mjs uses), then:
@@ -22,6 +22,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire, syncBuiltinESMExports } from 'node:module'
 import assert from 'node:assert/strict'
+import { assertSettingsContract } from './expected-settings-contract.mjs'
 
 const sandboxHome = mkdtempSync(join(tmpdir(), 'pink-theme-verify-'))
 const originalThemeOverride = process.env.DSH_TUI_THEME
@@ -58,8 +59,8 @@ assert.equal(name, 'dsh-tui-theme')
 
 /** A stub Cordis-like context; every seam optional and recorded. */
 function makeStubCtx({ status, sections, settingsService } = {}) {
-  const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], warnings: [] }
-  const logger = { info: () => {}, warn: msg => record.warnings.push(String(msg)), error: () => {} }
+  const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], warnings: [], infos: [] }
+  const logger = { info: msg => record.infos.push(String(msg)), warn: msg => record.warnings.push(String(msg)), error: () => {} }
   const base = {
     logger,
     get(serviceName) {
@@ -157,11 +158,11 @@ const emit = (record, event, ...args) => {
   const latest = statusCalls.at(-1)[1]
   assert.match(latest, /^✿ · \d{2}:\d{2} · 2✦$/)
 
-  // Settings namespace registered and the section declared.
+  // Settings namespace registered and the section declaration remains within
+  // the shared host form contract.
   assert.equal(settingsRecord.registerCalls.length, 1)
   assert.equal(sectionsCalls.length, 1)
-  assert.equal(sectionsCalls[0].ns, 'dsh-tui-theme')
-  assert.equal(sectionsCalls[0].fields.length, 5)
+  assertSettingsContract(assert, sectionsCalls[0])
 
   // A committed /settings edit lands live on the next render.
   for (const watcher of settingsRecord.watchers) {
@@ -179,6 +180,7 @@ const emit = (record, event, ...args) => {
 {
   const again = installBundledThemes()
   assert.deepEqual(again.installed, [])
+  assert.deepEqual(again.repaired, [])
   assert.equal(again.skipped.length, 3)
 
   // A user-edited same-named file must survive reinstallation.
@@ -378,6 +380,97 @@ const emit = (record, event, ...args) => {
     syncBuiltinESMExports()
   }
   console.log('✓ filesystem commits: failed atomic writes preserve JSON; competing theme creation skips')
+}
+
+// ── 12a. torn installation: a corrupt target is backed up and reinstalled ───
+{
+  const targetDir = join(sandboxHome, 'heal-target')
+  const sourceDir = join(pluginRoot, 'themes')
+  mkdirSync(targetDir, { recursive: true })
+
+  // A valid user file stays untouched — the never-overwrite rule wins.
+  writeFileSync(join(targetDir, 'pink-night.json'), '{ "user": true }')
+  // A torn write (crash mid-install) leaves invalid JSON behind.
+  writeFileSync(join(targetDir, 'pink-day.json'), '{ "name": "pink-day", "colors": {')
+  const heal = installBundledThemes(targetDir, sourceDir)
+  assert.deepEqual(heal.repaired, ['pink-day.json'], 'the corrupt target is reported as repaired')
+  assert.equal(heal.skipped.includes('pink-night.json'), true)
+  assert.equal(heal.failed.length, 0)
+  assert.equal(
+    JSON.parse(readFileSync(join(targetDir, 'pink-night.json'), 'utf8')).user,
+    true,
+    'valid user file untouched',
+  )
+  const reinstalled = JSON.parse(readFileSync(join(targetDir, 'pink-day.json'), 'utf8'))
+  assert.equal(reinstalled.name, 'pink-day')
+  const backups = readdirSync(targetDir).filter(entry =>
+    entry.startsWith('pink-day.json.corrupt-'),
+  )
+  assert.equal(backups.length, 1, 'the damaged file is preserved as a timestamped backup')
+  assert.equal(readFileSync(join(targetDir, backups[0]), 'utf8'), '{ "name": "pink-day", "colors": {')
+
+  // Next boot: everything parses, so no churn.
+  const steady = installBundledThemes(targetDir, sourceDir)
+  assert.deepEqual(steady.repaired, [])
+  assert.deepEqual(steady.installed, [])
+  assert.equal(steady.skipped.length, 3)
+
+  // A target the process cannot even read is not proven corrupt — keep skipping.
+  const unreadable = join(targetDir, 'pink-ansi.json')
+  const originalRead = builtinFs.readFileSync
+  try {
+    builtinFs.readFileSync = (path, ...rest) => {
+      if (String(path) === unreadable) throw new Error('EBUSY: locked')
+      return originalRead(path, ...rest)
+    }
+    syncBuiltinESMExports()
+    const blocked = installBundledThemes(targetDir, sourceDir)
+    assert.deepEqual(blocked.repaired, [])
+    assert.equal(blocked.skipped.includes('pink-ansi.json'), true)
+  } finally {
+    builtinFs.readFileSync = originalRead
+    syncBuiltinESMExports()
+  }
+  console.log('✓ torn installation: corrupt target backed up and reinstalled; user files and unreadable targets untouched')
+}
+
+// ── 12b. follow logging: the first settings doc is a baseline, not a flip ──
+{
+  // Default user layer (empty doc): no spurious "follow: disabled" line.
+  const settingsRecord = { registerCalls: [], watchers: [] }
+  const { ctx, record } = makeStubCtx({ settingsService: fakeSettingsService(settingsRecord, {}) })
+  apply(ctx)
+  assert.equal(
+    record.infos.some(message => message.includes('follow: disabled')),
+    false,
+    'a baseline doc matching the default must not log a disabled flip',
+  )
+
+  // User layer that starts enabled: the cache applies during the baseline.
+  const dataDir = join(sandboxHome, '.dsh-tui')
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
+  const enabledRecord = { registerCalls: [], watchers: [] }
+  const { ctx: enabledCtx, record: enabledInfo } = makeStubCtx({
+    status: fakeStatus([]),
+    sections: fakeSections([]),
+    settingsService: fakeSettingsService(enabledRecord, { followSystem: true }),
+  })
+  apply(enabledCtx)
+  assert.equal(readThemePref(dataDir), 'pink-day', 'an enabled baseline applies the cached background')
+  assert.equal(
+    enabledInfo.infos.some(message => message.includes('follow: disabled')),
+    false,
+  )
+
+  // A real toggle keeps its log.
+  for (const watcher of enabledRecord.watchers) watcher({ followSystem: false })
+  assert.equal(
+    enabledInfo.infos.filter(message => message.includes('follow: disabled')).length,
+    1,
+    'disabling follow after the baseline logs exactly once',
+  )
+  assert.equal(readThemePref(dataDir), 'pink-day', 'the manual choice stays intact')
+  console.log('✓ follow logging: baseline docs stay quiet, real toggles still log')
 }
 
 // ── 12. status injection: session handlers die with tuiStatus activation ────
