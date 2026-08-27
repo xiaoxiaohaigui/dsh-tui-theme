@@ -10,7 +10,7 @@
  * pink theme is active (checked per render with the host's own theme
  * precedence, so a mid-session /theme switch takes effect on the next tick);
  * `statusScope: 'all-themes'` opts it into every other theme too.
- * @module dsh-tui-pink-theme/statusLine
+ * @module dsh-tui-theme/statusLine
  */
 
 import { join } from 'node:path'
@@ -20,6 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session'
 import { homeDir } from './themeAssets.js'
 import { readThemePref } from './autoTheme.js'
+import { PLUGIN_ID } from './pluginId.js'
 
 /** Which themes the blossom line renders under. */
 export type StatusScope = 'pink-only' | 'all-themes'
@@ -41,7 +42,9 @@ export interface StatusOptions {
 export type EffectiveStatus = Required<StatusOptions>
 
 const GLYPH = '✿'
-const STATUS_KEY = 'dsh-tui-theme'
+// The tuiStatus contribution key (same value as the settings namespace and
+// the cordis plugin name — one literal would be three drift risks).
+const STATUS_KEY = PLUGIN_ID
 const CLOCK_TICK_MS = 15_000
 
 /** The bundled themes this garnish belongs to. */
@@ -52,6 +55,11 @@ const PINK_THEMES: ReadonlySet<string> = new Set(['pink-night', 'pink-day', 'pin
  * then the persisted ~/.dsh-tui/theme.json pref. The unforced path (OSC 11
  * auto-detection) only ever resolves to a builtin palette, never a pink one,
  * so "no pref" means non-pink.
+ *
+ * This deliberately mirrors the host's ThemeProvider resolution chain
+ * (`components/design-system/ThemeProvider.tsx`, baseline dsh-TUI 0.9.3);
+ * keep the two in sync if the host adds a precedence layer. If the host ever
+ * exposes a theme-query seam for plugins, prefer that over this re-read.
  */
 function activeThemeName(dataDir: string): string | undefined {
   const env = process.env.DSH_TUI_THEME

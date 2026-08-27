@@ -12,13 +12,14 @@
  * Both services are consumed through `ctx.inject`, not apply-time `get`
  * probes: this row may start before the host's service rows, and the inject
  * fires whenever each service actually registers.
- * @module dsh-tui-pink-theme/settingsSection
+ * @module dsh-tui-theme/settingsSection
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import type { StatusOptions } from './statusLine.js'
+import { PLUGIN_ID } from './pluginId.js'
 
 /** The plugin's settings document (every field optional at the user layer). */
 export type PinkSettingsDoc = StatusOptions & {
@@ -60,7 +61,7 @@ export function registerPinkSettings(
     const settings = (settingsCtx as Context & { settings: SettingsServiceLike }).settings
     try {
       const scope = settings.register(
-        settingsNamespace('dsh-tui-theme'),
+        settingsNamespace(PLUGIN_ID),
         z.object({
           followSystem: z.boolean(),
           showGlyph: z.boolean(),
@@ -88,7 +89,7 @@ export function registerPinkSettings(
       // A duplicate registration (hot reload race) or a stricter host must
       // not take the plugin — or the TUI — down.
       settingsCtx.logger.warn(
-        `dsh-tui-pink-theme: settings namespace registration failed: ${String(error)}`,
+        `dsh-tui-theme: settings namespace registration failed: ${String(error)}`,
       )
     }
   })
@@ -103,7 +104,7 @@ export function registerPinkSettings(
       // A duplicate registration (hot reload race) or a stricter host must
       // not take the plugin — or the TUI — down.
       sectionsCtx.logger.warn(
-        `dsh-tui-pink-theme: settings section registration failed: ${String(error)}`,
+        `dsh-tui-theme: settings section registration failed: ${String(error)}`,
       )
     }
   })
@@ -112,17 +113,17 @@ export function registerPinkSettings(
 /** The declarative /settings block (labels bilingual, zh via descriptions). */
 function sectionDefinition(cordis: StatusOptions & { followSystem?: boolean }): unknown {
   return {
-    ns: 'dsh-tui-theme',
+    ns: PLUGIN_ID,
     title: 'pink-theme',
     descriptions: { zh: 'pink-theme' },
     fields: [
       {
         path: ['followSystem'],
-        label: 'Use cached terminal background',
-        descriptions: { zh: '使用已缓存的终端背景' },
-        hint: 'Apply a previously saved terminal background result at startup. dsh-TUI 0.9.2 does not expose a safe plugin query, so this plugin does not refresh the cache.',
+        label: 'Apply saved terminal background',
+        descriptions: { zh: '应用上次保存的终端背景' },
+        hint: 'Apply a previously saved terminal background result at startup. dsh-TUI does not expose a safe plugin query, so this plugin does not refresh the cache.',
         hintDescriptions: {
-          zh: '启动时应用此前保存的终端背景结果。dsh-TUI 0.9.2 未提供安全的插件查询接缝，因此本插件不会刷新该缓存。',
+          zh: '启动时应用此前保存的终端背景结果。dsh-TUI 未提供安全的插件查询接缝，因此本插件不会刷新该缓存。',
         },
         kind: 'boolean',
         format: (value: unknown): string => String(value ?? cordis.followSystem),

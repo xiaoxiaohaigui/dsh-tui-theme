@@ -21,8 +21,9 @@ import { installBundledThemes, homeDir } from './themeAssets.js'
 import { startStatusLine, type EffectiveStatus, type StatusScope } from './statusLine.js'
 import { runFollowSystem } from './autoTheme.js'
 import { registerPinkSettings, type PinkSettingsDoc } from './settingsSection.js'
+import { PLUGIN_ID } from './pluginId.js'
 
-export const name = 'dsh-tui-theme'
+export const name = PLUGIN_ID
 
 /** Configurable knobs; every key has a sane default. */
 export type Config = PinkSettingsDoc
@@ -62,13 +63,6 @@ const DEFAULTS: EffectiveConfig = {
 }
 
 /**
- * Backstop delay for the cordis-layer follow decision on hosts without a
- * settings service (see apply). Stays under the host's own 300ms pre-mount
- * settings gate so the pref write still lands before first paint.
- */
-const FOLLOW_FALLBACK_MS = 150
-
-/**
  * Wire the pink theme plugin.
  * @param ctx - Cordis context (the plugin's own activation).
  * @param config - Validated plugin config (schema defaults applied).
@@ -89,10 +83,15 @@ export function apply(ctx: Context, config: Config = {}): void {
   if (cordis.autoInstallThemes) {
     const result = installBundledThemes()
     for (const file of result.installed) {
-      ctx.logger.info(`dsh-tui-theme: installed bundled theme "${file}" into ~/.dsh-tui/themes/`)
+      ctx.logger.info(`${PLUGIN_ID}: installed bundled theme "${file}" into ~/.dsh-tui/themes/`)
+    }
+    for (const file of result.repaired) {
+      ctx.logger.warn(
+        `${PLUGIN_ID}: found a corrupt "${file}" in ~/.dsh-tui/themes/, backed it up and reinstalled the bundled copy`,
+      )
     }
     for (const file of result.failed) {
-      ctx.logger.warn(`dsh-tui-theme: could not install bundled theme "${file}"`)
+      ctx.logger.warn(`${PLUGIN_ID}: could not install bundled theme "${file}"`)
     }
   }
 
@@ -100,7 +99,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   // lands live through scope.watch; both override the hardcoded defaults.
   let effective: EffectiveConfig = cordis
 
-  // Background follow applies only an existing cache. dsh-TUI v0.9.2 exposes
+  // Background follow applies only an existing cache. dsh-TUI exposes
   // no plugin terminal-query seam, so a theme plugin must not compete with
   // Ink's stdin reader or raw-mode lease. The /settings layer still determines
   // whether the cached result may control this startup.
@@ -111,25 +110,35 @@ export function apply(ctx: Context, config: Config = {}): void {
       dataDir,
       () => followActive === true,
       message => {
-        ctx.logger.info(`dsh-tui-theme: ${message}`)
+        ctx.logger.info(`${PLUGIN_ID}: ${message}`)
       },
     )
   }
   registerPinkSettings(ctx, cordis, doc => {
     effective = { ...cordis, ...doc }
-    if (effective.followSystem !== followActive) {
-      followActive = effective.followSystem
-      if (followActive) {
+    const follow = effective.followSystem === true
+    if (followActive === undefined) {
+      // First document: align the baseline, not a switch. A value that only
+      // matches the default logs nothing; a user layer that starts enabled
+      // still applies the cache immediately.
+      followActive = follow
+      if (follow) applyFollow()
+      return
+    }
+    if (followActive !== follow) {
+      followActive = follow
+      if (follow) {
         applyFollow()
       } else {
-        ctx.logger.info('dsh-tui-theme: follow: disabled, manual /theme choice preserved')
+        ctx.logger.info(`${PLUGIN_ID}: follow: disabled, manual /theme choice preserved`)
       }
     }
   })
-  // Cached following needs the merged settings document; without the settings
-  // seam the plugin keeps the user's existing theme choice and degrades to
-  // static assets rather than applying a profile default before that document
-  // could arrive.
+  // The follow decision is owned entirely by the /settings layer above: there
+  // is no timer or fallback path on hosts without a settings service — the
+  // plugin keeps the user's existing theme choice and degrades to static
+  // assets rather than applying a profile default before the merged document
+  // can arrive.
 
   startStatusLine(ctx, () => effective)
 }

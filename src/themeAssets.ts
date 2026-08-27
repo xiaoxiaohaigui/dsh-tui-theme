@@ -3,12 +3,15 @@
  *
  * Copies the package's themes/*.json into ~/.dsh-tui/themes/ on boot. Only
  * files that do not exist yet are written — a user's edited or same-named
- * theme file is never overwritten. Every failure is contained per file: a
- * theme garnish must never break the TUI's boot.
- * @module dsh-tui-pink-theme/themeAssets
+ * theme file is never overwritten. The one exception is a target that no
+ * longer parses as JSON (a torn write from an interrupted installation):
+ * that file is backed up under a .corrupt-<timestamp> name and replaced, so
+ * a crash can never shadow a bundled theme forever. Every failure is
+ * contained per file: a theme garnish must never break the TUI's boot.
+ * @module dsh-tui-theme/themeAssets
  */
 
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +21,8 @@ export interface ThemeInstallResult {
   readonly installed: readonly string[]
   /** Files already present in the target directory (left untouched). */
   readonly skipped: readonly string[]
+  /** Corrupt targets backed up and reinstalled (self-heal). */
+  readonly repaired: readonly string[]
   /** Files that could not be installed (per-file failures). */
   readonly failed: readonly string[]
 }
@@ -50,12 +55,13 @@ export function installBundledThemes(
 ): ThemeInstallResult {
   const installed: string[] = []
   const skipped: string[] = []
+  const repaired: string[] = []
   const failed: string[] = []
   let files: string[]
   try {
     files = readdirSync(sourceDir).filter(entry => entry.toLowerCase().endsWith('.json'))
   } catch {
-    return { installed, skipped, failed: [sourceDir] }
+    return { installed, skipped, repaired, failed: [sourceDir] }
   }
   for (const file of files) {
     const target = join(targetDir, file)
@@ -68,7 +74,8 @@ export function installBundledThemes(
         installed.push(file)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-          skipped.push(file)
+          if (healCorruptTarget(target, text)) repaired.push(file)
+          else skipped.push(file)
         } else {
           failed.push(file)
         }
@@ -77,5 +84,36 @@ export function installBundledThemes(
       failed.push(file)
     }
   }
-  return { installed, skipped, failed }
+  return { installed, skipped, repaired, failed }
+}
+
+/**
+ * Self-heal an existing target that fails to parse as JSON — the leftover of
+ * a torn write from an interrupted installation. The damaged file is kept as
+ * <target>.corrupt-<timestamp> and the bundled copy installed fresh. Returns
+ * false (leave untouched) when the target is valid JSON (a user file the
+ * never-overwrite rule protects), unreadable (unreadable is not proven
+ * corrupt), or when the backup/replace itself fails (degrade to the plain
+ * silent skip).
+ */
+function healCorruptTarget(target: string, text: string): boolean {
+  let existing: string
+  try {
+    existing = readFileSync(target, 'utf8')
+  } catch {
+    return false
+  }
+  try {
+    JSON.parse(existing)
+    return false
+  } catch {
+    // Proven corrupt: fall through to backup and reinstall.
+  }
+  try {
+    renameSync(target, `${target}.corrupt-${Date.now()}`)
+    writeFileSync(target, text, { flag: 'wx' })
+    return true
+  } catch {
+    return false
+  }
 }

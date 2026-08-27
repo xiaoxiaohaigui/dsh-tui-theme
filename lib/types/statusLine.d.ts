@@ -10,7 +10,7 @@
  * pink theme is active (checked per render with the host's own theme
  * precedence, so a mid-session /theme switch takes effect on the next tick);
  * `statusScope: 'all-themes'` opts it into every other theme too.
- * @module dsh-tui-pink-theme/statusLine
+ * @module dsh-tui-theme/statusLine
  */
 import type { Context } from '@deepseek-ai/cordis';
 /** Which themes the blossom line renders under. */

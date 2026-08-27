@@ -12,7 +12,7 @@
  * Both services are consumed through `ctx.inject`, not apply-time `get`
  * probes: this row may start before the host's service rows, and the inject
  * fires whenever each service actually registers.
- * @module dsh-tui-pink-theme/settingsSection
+ * @module dsh-tui-theme/settingsSection
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { StatusOptions } from './statusLine.js';

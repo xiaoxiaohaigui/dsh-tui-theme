@@ -3,15 +3,20 @@
  *
  * Copies the package's themes/*.json into ~/.dsh-tui/themes/ on boot. Only
  * files that do not exist yet are written — a user's edited or same-named
- * theme file is never overwritten. Every failure is contained per file: a
- * theme garnish must never break the TUI's boot.
- * @module dsh-tui-pink-theme/themeAssets
+ * theme file is never overwritten. The one exception is a target that no
+ * longer parses as JSON (a torn write from an interrupted installation):
+ * that file is backed up under a .corrupt-<timestamp> name and replaced, so
+ * a crash can never shadow a bundled theme forever. Every failure is
+ * contained per file: a theme garnish must never break the TUI's boot.
+ * @module dsh-tui-theme/themeAssets
  */
 export interface ThemeInstallResult {
     /** Files newly written into the target directory. */
     readonly installed: readonly string[];
     /** Files already present in the target directory (left untouched). */
     readonly skipped: readonly string[];
+    /** Corrupt targets backed up and reinstalled (self-heal). */
+    readonly repaired: readonly string[];
     /** Files that could not be installed (per-file failures). */
     readonly failed: readonly string[];
 }
