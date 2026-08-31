@@ -16,7 +16,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 import type { StatusOptions } from './statusLine.js'
 import { PLUGIN_ID } from './pluginId.js'
@@ -60,8 +60,12 @@ export function registerPinkSettings(
   ctx.inject(['settings'], settingsCtx => {
     const settings = (settingsCtx as Context & { settings: SettingsServiceLike }).settings
     try {
+      // dsh-settings validates the raw namespace at registration time. Keep
+      // this as a plain string so alpha.2 hosts, which removed the runtime
+      // settingsNamespace() helper, can load the plugin without a missing
+      // named export while older hosts retain the same behavior.
       const scope = settings.register(
-        settingsNamespace(PLUGIN_ID),
+        PLUGIN_ID as SettingsNamespace,
         z.object({
           followSystem: z.boolean(),
           showGlyph: z.boolean(),
