@@ -177,6 +177,36 @@ export function removeBundledThemes(
 }
 
 /**
+ * Bundled theme files present in the target directory byte-for-byte
+ * identical to the bundled copy. On runtime-theme hosts such files shadow
+ * the registry while adding nothing, so the entry point can point them out
+ * once. User-edited or foreign same-named files are never reported — the
+ * never-overwrite rule keeps them, and no toast may nag about them.
+ */
+export function findShadowedBundledThemes(
+  targetDir: string = themesTargetDir(),
+  sourceDir: string = bundledThemesDir(),
+): string[] {
+  const shadowed: string[] = []
+  let files: string[]
+  try {
+    files = readdirSync(sourceDir).filter(entry => entry.toLowerCase().endsWith('.json'))
+  } catch {
+    return shadowed
+  }
+  for (const file of files) {
+    try {
+      if (readFileSync(join(targetDir, file), 'utf8') === readFileSync(join(sourceDir, file), 'utf8')) {
+        shadowed.push(file)
+      }
+    } catch {
+      // Missing or unreadable target: not a shadow.
+    }
+  }
+  return shadowed
+}
+
+/**
  * Self-heal an existing target that fails to parse as JSON — the leftover of
  * a torn write from an interrupted installation. The damaged file is kept as
  * <target>.corrupt-<timestamp>-<pid>-<random> and the bundled copy installed

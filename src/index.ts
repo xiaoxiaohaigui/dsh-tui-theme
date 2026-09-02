@@ -17,11 +17,12 @@
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { installBundledThemes, homeDir, removeBundledThemes } from './themeAssets.js'
+import { installBundledThemes, homeDir, removeBundledThemes, findShadowedBundledThemes } from './themeAssets.js'
 import { startRuntimeThemes } from './runtimeThemes.js'
 import { startStatusLine, type EffectiveStatus, type StatusScope } from './statusLine.js'
 import { runFollowSystem } from './autoTheme.js'
 import { registerPinkSettings, type PinkSettingsDoc } from './settingsSection.js'
+import { startToastRelay } from './toast.js'
 import { PLUGIN_ID } from './pluginId.js'
 
 export const name = PLUGIN_ID
@@ -81,6 +82,11 @@ export function apply(ctx: Context, config: Config = {}): void {
     statusScope: config.statusScope ?? DEFAULTS.statusScope,
   }
 
+  // User-visible one-liners for the few events worth surfacing (the plugin
+  // logger is invisible to a TUI user). Hosts without the 0.10 toast seam
+  // degrade to the log-only behavior of previous releases.
+  const sendToast = startToastRelay(ctx)
+
   // New hosts own the palette in memory. Install synchronously first so an old
   // host can resolve a persisted theme during its first render. If a runtime
   // service appears afterwards, remove only files written by this activation
@@ -103,12 +109,25 @@ export function apply(ctx: Context, config: Config = {}): void {
       ctx.logger.warn(`${PLUGIN_ID}: could not install bundled theme "${file}"`)
     }
     for (const file of [...result.installed, ...result.repaired]) ownedStaticFiles.add(file)
+    if (result.repaired.length > 0) {
+      sendToast(`✿ 已修复损坏的主题文件：${result.repaired.join('、')}`, 'warning')
+    }
   }
   const markRuntimeAvailable = (): void => {
+    const firstConfirmation = !runtimeConfirmed
     runtimeConfirmed = true
     if (ownedStaticFiles.size > 0) {
       removeBundledThemes([...ownedStaticFiles])
       ownedStaticFiles.clear()
+    }
+    // Same-named static files win over runtime registrations. User-edited
+    // files stay unmentioned; files byte-identical to the bundled copy add
+    // nothing but permanently block palette updates, so point them out once.
+    if (!firstConfirmation) return
+    const shadowed = findShadowedBundledThemes()
+    if (shadowed.length > 0) {
+      ctx.logger.info(`${PLUGIN_ID}: legacy static files shadow the runtime registry: ${shadowed.join(', ')}`)
+      sendToast(`✿ ${shadowed.join('、')} 与插件内置相同，删除后配色将随插件自动更新`)
     }
   }
   let runtimePresent = false
@@ -118,8 +137,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     runtimePresent = false
   }
   if (runtimePresent) {
-    runtimeConfirmed = true
-    startRuntimeThemes(ctx)
+    startRuntimeThemes(ctx, markRuntimeAvailable)
   } else {
     installStatic()
     ctx.effect(() => () => {
@@ -138,12 +156,32 @@ export function apply(ctx: Context, config: Config = {}): void {
   // whether the cached result may control this startup.
   let followActive: boolean | undefined
   const dataDir = join(homeDir(), '.dsh-tui')
-  const applyFollow = (): void => {
+  const applyFollow = (userInitiated: boolean): void => {
     runFollowSystem(
       dataDir,
       () => followActive === true,
-      message => {
-        ctx.logger.info(`${PLUGIN_ID}: ${message}`)
+      outcome => {
+        if (outcome.kind === 'unavailable') {
+          ctx.logger.info(
+            `${PLUGIN_ID}: follow: cached background unavailable or preference write failed; keeping current choice`,
+          )
+          // Startup baselines stay quiet: the follow feature has no cache
+          // producer on modern hosts, and an identical warning every boot
+          // would be noise, not feedback. An explicit toggle-on deserves the
+          // honest answer that nothing was applied.
+          if (userInitiated) {
+            sendToast('✿ 没有保存的终端背景缓存，保持当前主题', 'warning')
+          }
+          return
+        }
+        ctx.logger.info(`${PLUGIN_ID}: follow: applied cached background (${outcome.theme})`)
+        if (outcome.changed) {
+          // A real pref write: the live TUI resolved its palette from the
+          // previous pref, so the new choice needs /reload or a restart.
+          sendToast(`✿ 已按保存的终端背景改用 ${outcome.theme}，/reload 即时生效`, 'success')
+        } else if (userInitiated) {
+          sendToast(`✿ 已按保存的终端背景保持 ${outcome.theme}`, 'success')
+        }
       },
     )
   }
@@ -155,13 +193,13 @@ export function apply(ctx: Context, config: Config = {}): void {
       // matches the default logs nothing; a user layer that starts enabled
       // still applies the cache immediately.
       followActive = follow
-      if (follow) applyFollow()
+      if (follow) applyFollow(false)
       return
     }
     if (followActive !== follow) {
       followActive = follow
       if (follow) {
-        applyFollow()
+        applyFollow(true)
       } else {
         ctx.logger.info(`${PLUGIN_ID}: follow: disabled, manual /theme choice preserved`)
       }

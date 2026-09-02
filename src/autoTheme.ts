@@ -95,22 +95,33 @@ export function applyCachedFollow(dataDir: string): string | undefined {
   return writeThemePref(target, dataDir) ? target : undefined
 }
 
+/** What one follow application actually did (log and toast both derive from it). */
+export type FollowOutcome =
+  | { kind: 'applied'; theme: string; changed: boolean }
+  | { kind: 'unavailable' }
+
 /**
  * Apply a previously detected background without touching terminal I/O. A
  * future host-owned terminal query service may refresh theme-follow.json; this
  * plugin intentionally does not access stdin, stdout, or raw mode directly.
+ *
+ * The structured outcome lets the entry point keep one source of truth for
+ * the log line and the user-visible toast: `changed` distinguishes a real
+ * preference write (the live TUI still shows the previous palette until
+ * /reload or a restart) from a no-op confirmation.
  */
 export function runFollowSystem(
   dataDir: string,
   isCurrent: () => boolean,
-  log: (message: string) => void,
+  report: (outcome: FollowOutcome) => void,
 ): void {
   if (!isCurrent()) return
+  const before = readThemePref(dataDir)
   const applied = applyCachedFollow(dataDir)
   if (!isCurrent()) return
   if (applied === undefined) {
-    log('follow: cached background unavailable or preference write failed; keeping current choice')
-  } else {
-    log(`follow: applied cached background (${applied})`)
+    report({ kind: 'unavailable' })
+    return
   }
+  report({ kind: 'applied', theme: applied, changed: before !== applied })
 }

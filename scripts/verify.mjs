@@ -44,8 +44,9 @@ const builtinFs = require('node:fs')
 const sandboxThemes = join(sandboxHome, '.dsh-tui', 'themes')
 
 const { name, apply } = await import('../lib/types/index.js')
-const { installBundledThemes, readBundledThemes } = await import('../lib/types/themeAssets.js')
+const { installBundledThemes, readBundledThemes, findShadowedBundledThemes } = await import('../lib/types/themeAssets.js')
 const { startStatusLine } = await import('../lib/types/statusLine.js')
+const { setToastRetryDelaysForTests } = await import('../lib/types/toast.js')
 const {
   themeForBackground,
   readThemePref,
@@ -63,7 +64,7 @@ const applyAndSettle = async (ctx, config) => {
 }
 
 /** A stub Cordis-like context; every seam optional and recorded. */
-function makeStubCtx({ status, sections, settingsService, themes, deferThemes = false } = {}) {
+function makeStubCtx({ status, sections, settingsService, themes, toast, deferThemes = false } = {}) {
   const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], themeRegisters: [], warnings: [], infos: [] }
   let availableThemes = themes
   const deferredThemeCallbacks = []
@@ -74,6 +75,7 @@ function makeStubCtx({ status, sections, settingsService, themes, deferThemes = 
       if (serviceName === 'tuiStatus') return status
       if (serviceName === 'tuiSettingsSections') return sections
       if (serviceName === 'tuiThemes') return availableThemes
+      if (serviceName === 'tuiToast') return toast
       return undefined
     },
     on(event, handler) {
@@ -94,6 +96,7 @@ function makeStubCtx({ status, sections, settingsService, themes, deferThemes = 
         tuiStatus: status,
         tuiSettingsSections: sections,
         tuiThemes: availableThemes,
+        tuiToast: toast,
       }
       if (deferThemes && availableThemes === undefined && deps.includes('tuiThemes')) {
         deferredThemeCallbacks.push(callback)
@@ -130,6 +133,18 @@ const fakeSettingsService = (record, doc) => ({
     }
   },
 })
+/** Records delivered toasts; the first `dropFirst` shows are dropped (no sink yet). */
+const fakeToast = (deliveries, { dropFirst = 0 } = {}) => {
+  let shown = 0
+  return {
+    show(text, options) {
+      shown += 1
+      if (shown <= dropFirst) return false
+      deliveries.push([String(text), options?.color])
+      return true
+    },
+  }
+}
 
 const emit = (record, event, ...args) => {
   for (const handler of record.handlers.get(event) ?? []) handler(...args)
@@ -296,15 +311,27 @@ const emit = (record, event, ...args) => {
   // Same value -> no rewrite churn (mtime-agnostic: pref already matches).
   assert.equal(applyCachedFollow(dataDir), 'pink-day')
 
-  // The follow runner only applies cache and reports its result. It accepts no
-  // stdin/stdout handles and cannot create a raw-mode lease or input listener.
-  const logs = []
-  runFollowSystem(dataDir, () => true, message => logs.push(message))
-  assert.deepEqual(logs, ['follow: applied cached background (pink-day)'])
+  // The follow runner only applies cache and reports its structured outcome.
+  // It accepts no stdin/stdout handles and cannot create a raw-mode lease or
+  // input listener.
+  const reports = []
+  runFollowSystem(dataDir, () => true, outcome => reports.push(outcome))
+  assert.deepEqual(reports, [{ kind: 'applied', theme: 'pink-day', changed: false }])
 
   writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
-  runFollowSystem(dataDir, () => false, message => logs.push(message))
+  runFollowSystem(dataDir, () => false, outcome => reports.push(outcome))
   assert.equal(readThemePref(dataDir), 'dark', 'inactive follow preserves manual choice')
+
+  runFollowSystem(dataDir, () => true, outcome => reports.push(outcome))
+  assert.deepEqual(
+    reports.at(-1),
+    { kind: 'applied', theme: 'pink-day', changed: true },
+    'a real pref flip is reported as changed',
+  )
+
+  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
+  runFollowSystem(dataDir, () => true, outcome => reports.push(outcome))
+  assert.deepEqual(reports.at(-1), { kind: 'unavailable' })
   console.log('✓ follow: cached background applies without terminal I/O')
 }
 
@@ -638,6 +665,145 @@ const emit = (record, event, ...args) => {
   assert.equal(firstCalls.at(-1)[1], '1✦')
   second.dispose()
   console.log('✓ status lifecycle: session handlers follow tuiStatus activation')
+}
+
+// ── 13. toast feedback: the 0.10 seam surfaces what the logger cannot ───────
+{
+  setToastRetryDelaysForTests([5, 5])
+  const dataDir = join(sandboxHome, '.dsh-tui')
+  mkdirSync(dataDir, { recursive: true })
+
+  // 13a. Startup baseline with a disagreeing cache: one success toast that
+  // points at /reload (the live TUI still shows the previous palette).
+  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
+  const baselineDeliveries = []
+  const baselineRecord = { registerCalls: [], watchers: [] }
+  const { ctx: baselineCtx } = makeStubCtx({
+    status: fakeStatus([]),
+    sections: fakeSections([]),
+    settingsService: fakeSettingsService(baselineRecord, { followSystem: true }),
+    toast: fakeToast(baselineDeliveries),
+  })
+  await applyAndSettle(baselineCtx)
+  assert.equal(readThemePref(dataDir), 'pink-day')
+  assert.equal(baselineDeliveries.length, 1, 'a real baseline pref write toasts exactly once')
+  assert.equal(baselineDeliveries[0][1], 'success')
+  assert.match(baselineDeliveries[0][0], /pink-day/)
+  assert.match(baselineDeliveries[0][0], /reload/)
+
+  // 13b. Stable baseline (pref already matches the cache): quiet.
+  const quietDeliveries = []
+  const quietRecord = { registerCalls: [], watchers: [] }
+  const { ctx: quietCtx } = makeStubCtx({
+    status: fakeStatus([]),
+    sections: fakeSections([]),
+    settingsService: fakeSettingsService(quietRecord, { followSystem: true }),
+    toast: fakeToast(quietDeliveries),
+  })
+  await applyAndSettle(quietCtx)
+  assert.equal(quietDeliveries.length, 0, 'a baseline that changes nothing stays silent')
+
+  // 13c. Toggle confirmations: an explicit enable always answers — with the
+  // matching-cache confirmation, or the honest warning when nothing applies.
+  const toggleDeliveries = []
+  const toggleRecord = { registerCalls: [], watchers: [] }
+  const { ctx: toggleCtx } = makeStubCtx({
+    status: fakeStatus([]),
+    sections: fakeSections([]),
+    settingsService: fakeSettingsService(toggleRecord, {}),
+    toast: fakeToast(toggleDeliveries),
+  })
+  await applyAndSettle(toggleCtx)
+  for (const w of toggleRecord.watchers) w({ followSystem: true })
+  assert.equal(toggleDeliveries.length, 1, 'toggle-on with a matching cache confirms')
+  assert.equal(toggleDeliveries[0][1], 'success')
+  assert.equal(/reload/.test(toggleDeliveries[0][0]), false, 'no reload hint when nothing changed')
+  for (const w of toggleRecord.watchers) w({ followSystem: false })
+  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
+  for (const w of toggleRecord.watchers) w({ followSystem: true })
+  assert.equal(toggleDeliveries.length, 2, 'toggle-on without a cache answers too')
+  assert.equal(toggleDeliveries[1][1], 'warning')
+
+  // 13d. A toast dropped before the host sink exists is retried until delivered.
+  const retryDeliveries = []
+  const retryRecord = { registerCalls: [], watchers: [] }
+  const { ctx: retryCtx } = makeStubCtx({
+    status: fakeStatus([]),
+    sections: fakeSections([]),
+    settingsService: fakeSettingsService(retryRecord, {}),
+    toast: fakeToast(retryDeliveries, { dropFirst: 1 }),
+  })
+  await applyAndSettle(retryCtx)
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: false, at: 1 }))
+  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'pink-day' }, null, 2))
+  for (const w of retryRecord.watchers) w({ followSystem: true })
+  const retryDeadline = Date.now() + 2_000
+  while (retryDeliveries.length === 0 && Date.now() < retryDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  assert.equal(retryDeliveries.length, 1, 'a dropped toast is retried and delivered')
+  assert.match(retryDeliveries[0][0], /pink-night/)
+
+  // 13e. Toast-seam-less host (dsh-TUI < 0.10): sends are silent no-ops and
+  // the follow feature itself is unchanged.
+  const legacyRecord = { registerCalls: [], watchers: [] }
+  const { ctx: legacyCtx } = makeStubCtx({
+    status: fakeStatus([]),
+    sections: fakeSections([]),
+    settingsService: fakeSettingsService(legacyRecord, {}),
+  })
+  await applyAndSettle(legacyCtx)
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
+  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
+  for (const w of legacyRecord.watchers) w({ followSystem: true })
+  assert.equal(readThemePref(dataDir), 'pink-day', 'follow works unchanged without the toast seam')
+
+  // 13f. Shadow hint: legacy same-named files that are byte-identical to the
+  // bundled copy are pointed out once on runtime confirmation; user edits
+  // stay unmentioned. Files this activation installed itself are excluded
+  // (they were already removed before the check).
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  mkdirSync(sandboxThemes, { recursive: true })
+  for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
+    writeFileSync(join(sandboxThemes, `${theme}.json`), readFileSync(join(pluginRoot, 'themes', `${theme}.json`), 'utf8'))
+  }
+  assert.deepEqual(findShadowedBundledThemes().sort(), ['pink-ansi.json', 'pink-day.json', 'pink-night.json'])
+  const shadowDeliveries = []
+  const shadowContext = makeStubCtx({ deferThemes: true, toast: fakeToast(shadowDeliveries) })
+  apply(shadowContext.ctx)
+  shadowContext.record.activateThemes(fakeThemes(shadowContext.record))
+  await settle()
+  assert.equal(shadowDeliveries.length, 1, 'identical legacy files are pointed out once')
+  assert.equal(shadowDeliveries[0][1], undefined, 'the shadow hint is neutral, not an error')
+  assert.match(shadowDeliveries[0][0], /pink-day\.json/)
+
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  installBundledThemes()
+  writeFileSync(join(sandboxThemes, 'pink-night.json'), '{ "name": "pink-night", "colors": { "text": "#123456" } }')
+  const editDeliveries = []
+  const editContext = makeStubCtx({ deferThemes: true, toast: fakeToast(editDeliveries) })
+  apply(editContext.ctx)
+  editContext.record.activateThemes(fakeThemes(editContext.record))
+  await settle()
+  assert.equal(editDeliveries.length, 1)
+  assert.equal(/pink-night\.json/.test(editDeliveries[0][0]), false, 'a user-edited file is never nagged')
+  assert.equal(/pink-day\.json/.test(editDeliveries[0][0]), true)
+
+  // 13g. Corrupt-file self-heal is surfaced as a warning toast.
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  mkdirSync(sandboxThemes, { recursive: true })
+  writeFileSync(join(sandboxThemes, 'pink-day.json'), '{ broken')
+  const healDeliveries = []
+  const healContext = makeStubCtx({ deferThemes: true, toast: fakeToast(healDeliveries) })
+  apply(healContext.ctx)
+  assert.equal(healDeliveries.length, 1, 'a repaired theme file is surfaced')
+  assert.equal(healDeliveries[0][1], 'warning')
+  assert.match(healDeliveries[0][0], /pink-day\.json/)
+
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  setToastRetryDelaysForTests([2_000, 4_000])
+  console.log('✓ toast feedback: follow/self-heal/shadow hints delivered, drops retried, legacy hosts silent')
 }
 
 console.log('\nAll plugin verifications passed.')

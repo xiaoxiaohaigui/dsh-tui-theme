@@ -29,11 +29,24 @@ export declare function themeForBackground(light: boolean): string;
  * preference committed successfully.
  */
 export declare function applyCachedFollow(dataDir: string): string | undefined;
+/** What one follow application actually did (log and toast both derive from it). */
+export type FollowOutcome = {
+    kind: 'applied';
+    theme: string;
+    changed: boolean;
+} | {
+    kind: 'unavailable';
+};
 /**
  * Apply a previously detected background without touching terminal I/O. A
  * future host-owned terminal query service may refresh theme-follow.json; this
  * plugin intentionally does not access stdin, stdout, or raw mode directly.
+ *
+ * The structured outcome lets the entry point keep one source of truth for
+ * the log line and the user-visible toast: `changed` distinguishes a real
+ * preference write (the live TUI still shows the previous palette until
+ * /reload or a restart) from a no-op confirmation.
  */
-export declare function runFollowSystem(dataDir: string, isCurrent: () => boolean, log: (message: string) => void): void;
+export declare function runFollowSystem(dataDir: string, isCurrent: () => boolean, report: (outcome: FollowOutcome) => void): void;
 export {};
 //# sourceMappingURL=autoTheme.d.ts.map

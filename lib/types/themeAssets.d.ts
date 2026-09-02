@@ -47,4 +47,12 @@ export declare function installBundledThemes(targetDir?: string, sourceDir?: str
  * window between installation and runtime confirmation.
  */
 export declare function removeBundledThemes(files: readonly string[], targetDir?: string, sourceDir?: string): string[];
+/**
+ * Bundled theme files present in the target directory byte-for-byte
+ * identical to the bundled copy. On runtime-theme hosts such files shadow
+ * the registry while adding nothing, so the entry point can point them out
+ * once. User-edited or foreign same-named files are never reported — the
+ * never-overwrite rule keeps them, and no toast may nag about them.
+ */
+export declare function findShadowedBundledThemes(targetDir?: string, sourceDir?: string): string[];
 //# sourceMappingURL=themeAssets.d.ts.map

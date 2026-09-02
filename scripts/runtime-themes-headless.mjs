@@ -81,3 +81,45 @@ const themeReleases = readLedger().filter(entry => entry.resource?.kind === 'the
 assert.deepEqual(themeReleases.map(entry => entry.resource.id).sort(), ['pink-ansi', 'pink-day', 'pink-night'])
 assert.deepEqual(themeModule.getTheme('pink-night'), themeModule.getTheme('dark'), 'disposed runtime theme no longer resolves')
 console.log('OK runtime themes: 3 registered, no static files, ledger create/release, disposal clean')
+
+// ── Phase 2: real-host toast delivery (0.10 tuiToast seam) ──────────────────
+// A pre-0.10 user's byte-identical static files shadow the runtime registry;
+// the plugin must surface that through the real toast service. The sink is
+// attached after the extensions row applies, so a toast fired earlier is
+// dropped and must arrive through the relay's bounded retry instead — this
+// exercises both the show() caller binding outside the inject callback and
+// the drop-retry path against the real host.
+const toastModule = await import(pathToFileURL(join(adapter, 'toast.js')).href)
+const sandbox2 = mkdtempSync(join(tmpdir(), 'pink-toast-'))
+process.env.USERPROFILE = sandbox2
+process.env.HOME = sandbox2
+const dataDir2 = join(sandbox2, '.dsh-tui')
+mkdirSync(join(dataDir2, 'themes'), { recursive: true })
+writeFileSync(join(dataDir2, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
+  writeFileSync(
+    join(dataDir2, 'themes', `${theme}.json`),
+    readFileSync(join(pluginRoot, 'themes', `${theme}.json`), 'utf8'),
+  )
+}
+
+const deliveries = []
+const app2 = new Context()
+await app2.plugin(pluginHost.default ?? pluginHost)
+const admitted2 = await testUtils.mountAdmitted(app2, SETTINGS_NAMESPACE, manifest)
+await admitted2.context.plugin(pink)
+await app2.plugin(extensions.default ?? extensions)
+toastModule.getHostToastStore(app2.get('tuiToast'))?.setSink(delivery => deliveries.push(delivery))
+
+const toastDeadline = Date.now() + 8_000
+while (deliveries.length === 0 && Date.now() < toastDeadline) {
+  await testUtils.sleep(25)
+}
+assert.ok(deliveries.length >= 1, 'the shadow-hint toast must reach the host sink (retry included)')
+assert.equal(deliveries[0].color, undefined, 'the shadow hint is neutral')
+for (const file of ['pink-night.json', 'pink-day.json', 'pink-ansi.json']) {
+  assert.ok(deliveries[0].text.includes(file), `hint must name ${file}`)
+}
+await admitted2.fiber.dispose()
+await testUtils.sleep(50)
+console.log('OK toast: shadow hint delivered through the real tuiToast seam')
