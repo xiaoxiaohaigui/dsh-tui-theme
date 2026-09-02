@@ -64,10 +64,12 @@ const applyAndSettle = async (ctx, config) => {
 }
 
 /** A stub Cordis-like context; every seam optional and recorded. */
-function makeStubCtx({ status, sections, settingsService, themes, toast, deferThemes = false } = {}) {
+function makeStubCtx({ status, sections, settingsService, themes, toast, deferThemes = false, deferToast = false } = {}) {
   const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], themeRegisters: [], warnings: [], infos: [] }
   let availableThemes = themes
+  let availableToast = toast
   const deferredThemeCallbacks = []
+  const deferredToastCallbacks = []
   const logger = { info: msg => record.infos.push(String(msg)), warn: msg => record.warnings.push(String(msg)), error: () => {} }
   const base = {
     logger,
@@ -75,7 +77,7 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, deferTh
       if (serviceName === 'tuiStatus') return status
       if (serviceName === 'tuiSettingsSections') return sections
       if (serviceName === 'tuiThemes') return availableThemes
-      if (serviceName === 'tuiToast') return toast
+      if (serviceName === 'tuiToast') return availableToast
       return undefined
     },
     on(event, handler) {
@@ -96,10 +98,14 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, deferTh
         tuiStatus: status,
         tuiSettingsSections: sections,
         tuiThemes: availableThemes,
-        tuiToast: toast,
+        tuiToast: availableToast,
       }
       if (deferThemes && availableThemes === undefined && deps.includes('tuiThemes')) {
         deferredThemeCallbacks.push(callback)
+        return
+      }
+      if (deferToast && availableToast === undefined && deps.includes('tuiToast')) {
+        deferredToastCallbacks.push(callback)
         return
       }
       if (deps.every(dep => services[dep] !== undefined)) {
@@ -111,6 +117,10 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, deferTh
   record.activateThemes = service => {
     availableThemes = service
     for (const callback of deferredThemeCallbacks.splice(0)) callback({ ...base, tuiThemes: service })
+  }
+  record.activateToast = service => {
+    availableToast = service
+    for (const callback of deferredToastCallbacks.splice(0)) callback({ ...base, tuiToast: service })
   }
   return { ctx: base, record }
 }
@@ -674,19 +684,26 @@ const emit = (record, event, ...args) => {
   mkdirSync(dataDir, { recursive: true })
 
   // 13a. Startup baseline with a disagreeing cache: one success toast that
-  // points at /reload (the live TUI still shows the previous palette).
+  // points at /reload (the live TUI still shows the previous palette). The
+  // tuiToast seam trails apply on a real host (extensions row), so the send
+  // must survive on the bounded retry until the seam shows up.
   writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
   writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
   const baselineDeliveries = []
   const baselineRecord = { registerCalls: [], watchers: [] }
-  const { ctx: baselineCtx } = makeStubCtx({
+  const baselineContext = makeStubCtx({
     status: fakeStatus([]),
     sections: fakeSections([]),
     settingsService: fakeSettingsService(baselineRecord, { followSystem: true }),
-    toast: fakeToast(baselineDeliveries),
+    deferToast: true,
   })
-  await applyAndSettle(baselineCtx)
-  assert.equal(readThemePref(dataDir), 'pink-day')
+  await applyAndSettle(baselineContext.ctx)
+  assert.equal(readThemePref(dataDir), 'pink-day', 'the pref write is synchronous, independent of the toast seam')
+  baselineContext.record.activateToast(fakeToast(baselineDeliveries))
+  const baselineDeadline = Date.now() + 2_000
+  while (baselineDeliveries.length === 0 && Date.now() < baselineDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
   assert.equal(baselineDeliveries.length, 1, 'a real baseline pref write toasts exactly once')
   assert.equal(baselineDeliveries[0][1], 'success')
   assert.match(baselineDeliveries[0][0], /pink-day/)
@@ -746,18 +763,26 @@ const emit = (record, event, ...args) => {
   assert.match(retryDeliveries[0][0], /pink-night/)
 
   // 13e. Toast-seam-less host (dsh-TUI < 0.10): sends are silent no-ops and
-  // the follow feature itself is unchanged.
+  // the follow feature itself is unchanged. The retry chain stays bounded:
+  // once it gives up, a seam arriving later must not resurrect the abandoned
+  // toast.
   const legacyRecord = { registerCalls: [], watchers: [] }
-  const { ctx: legacyCtx } = makeStubCtx({
+  const legacyContext = makeStubCtx({
     status: fakeStatus([]),
     sections: fakeSections([]),
     settingsService: fakeSettingsService(legacyRecord, {}),
+    deferToast: true,
   })
-  await applyAndSettle(legacyCtx)
+  await applyAndSettle(legacyContext.ctx)
   writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
   writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
   for (const w of legacyRecord.watchers) w({ followSystem: true })
   assert.equal(readThemePref(dataDir), 'pink-day', 'follow works unchanged without the toast seam')
+  await new Promise(resolve => setTimeout(resolve, 50)) // the [5, 5] chain is long exhausted
+  const lateDeliveries = []
+  legacyContext.record.activateToast(fakeToast(lateDeliveries))
+  await settle()
+  assert.equal(lateDeliveries.length, 0, 'an abandoned toast is not resurrected by a late seam')
 
   // 13f. Shadow hint: legacy same-named files that are byte-identical to the
   // bundled copy are pointed out once on runtime confirmation; user edits
@@ -790,20 +815,26 @@ const emit = (record, event, ...args) => {
   assert.equal(/pink-night\.json/.test(editDeliveries[0][0]), false, 'a user-edited file is never nagged')
   assert.equal(/pink-day\.json/.test(editDeliveries[0][0]), true)
 
-  // 13g. Corrupt-file self-heal is surfaced as a warning toast.
+  // 13g. Corrupt-file self-heal is surfaced as a warning toast. The toast
+  // seam trails apply on a real host, so the send waits on the retry chain.
   rmSync(sandboxThemes, { recursive: true, force: true })
   mkdirSync(sandboxThemes, { recursive: true })
   writeFileSync(join(sandboxThemes, 'pink-day.json'), '{ broken')
   const healDeliveries = []
-  const healContext = makeStubCtx({ deferThemes: true, toast: fakeToast(healDeliveries) })
+  const healContext = makeStubCtx({ deferThemes: true, deferToast: true })
   apply(healContext.ctx)
+  healContext.record.activateToast(fakeToast(healDeliveries))
+  const healDeadline = Date.now() + 2_000
+  while (healDeliveries.length === 0 && Date.now() < healDeadline) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
   assert.equal(healDeliveries.length, 1, 'a repaired theme file is surfaced')
   assert.equal(healDeliveries[0][1], 'warning')
   assert.match(healDeliveries[0][0], /pink-day\.json/)
 
   rmSync(sandboxThemes, { recursive: true, force: true })
   setToastRetryDelaysForTests([2_000, 4_000])
-  console.log('✓ toast feedback: follow/self-heal/shadow hints delivered, drops retried, legacy hosts silent')
+  console.log('✓ toast feedback: follow/self-heal/shadow hints delivered, dropped and seam-less sends retried, legacy hosts silent and bounded')
 }
 
 console.log('\nAll plugin verifications passed.')

@@ -123,3 +123,58 @@ for (const file of ['pink-night.json', 'pink-day.json', 'pink-ansi.json']) {
 await admitted2.fiber.dispose()
 await testUtils.sleep(50)
 console.log('OK toast: shadow hint delivered through the real tuiToast seam')
+
+// ── Phase 3: apply-time toasts reach the sink through the seam-late retry ───
+// On a real 0.10 host the tuiToast service arrives with the extensions row,
+// after this plugin's apply, so toasts fired during apply (the self-heal
+// warning, the boot-follow result) can only survive through the relay's
+// bounded retry. A settings service present at apply time (the dsh CLI core
+// service) drives the boot-follow path with a disagreeing cache.
+const sandbox3 = mkdtempSync(join(tmpdir(), 'pink-apply-toast-'))
+process.env.USERPROFILE = sandbox3
+process.env.HOME = sandbox3
+const dataDir3 = join(sandbox3, '.dsh-tui')
+mkdirSync(join(dataDir3, 'themes'), { recursive: true })
+// Corrupt self-heal target; boot-follow cache disagrees with the persisted pref.
+writeFileSync(join(dataDir3, 'themes', 'pink-night.json'), '{ this is not json')
+writeFileSync(join(dataDir3, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+writeFileSync(join(dataDir3, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }, null, 2))
+
+// Minimal settings service standing in for the dsh CLI core service: present
+// at plugin apply time with followSystem already enabled, mirrors scope.watch.
+const fakeSettings = {
+  register() {
+    return {
+      get: () => ({ followSystem: true }),
+      watch(listener) {
+        listener({ followSystem: true })
+        return () => {}
+      },
+    }
+  },
+}
+
+const deliveries3 = []
+const app3 = new Context()
+await app3.plugin(pluginHost.default ?? pluginHost)
+const admitted3 = await testUtils.mountAdmitted(app3, SETTINGS_NAMESPACE, manifest)
+app3.provide('settings', fakeSettings)
+await admitted3.context.plugin(pink)
+await app3.plugin(extensions.default ?? extensions)
+toastModule.getHostToastStore(app3.get('tuiToast'))?.setSink(delivery => deliveries3.push(delivery))
+
+const applyToastDeadline = Date.now() + 8_000
+while (deliveries3.length < 2 && Date.now() < applyToastDeadline) {
+  await testUtils.sleep(25)
+}
+const healToast = deliveries3.find(delivery => delivery.text.includes('已修复'))
+assert.ok(healToast, 'the self-heal warning fired during apply must reach the host sink')
+assert.equal(healToast.color, 'warning', 'the self-heal toast is a warning')
+assert.ok(healToast.text.includes('pink-night.json'), 'the heal toast names the repaired file')
+const followToast = deliveries3.find(delivery => delivery.text.includes('已按保存的终端背景'))
+assert.ok(followToast, 'the boot-follow result fired at settings time must reach the host sink')
+assert.equal(followToast.color, 'success', 'the boot-follow toast is a success')
+assert.ok(followToast.text.includes('pink-day') && followToast.text.includes('reload'), 'the follow toast names the new theme and the reload hint')
+assert.equal(JSON.parse(readFileSync(join(dataDir3, 'theme.json'), 'utf8')).theme, 'pink-day', 'the follow pref write still happened')
+await admitted3.fiber.dispose()
+console.log('OK toast phase 3: apply-time self-heal and boot-follow toasts delivered on the real host')

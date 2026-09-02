@@ -11,9 +11,11 @@
  *
  * The host registers its toast sink late (the dsh-tui row applies after the
  * extensions row, and both may trail this plugin), so a toast dropped for
- * having no sink is retried on a short schedule before giving up. Retries
- * are bounded, unref'd, and cleared with the activation; a toast lost to a
- * host rate limit is not worth fighting — the next real event re-reports.
+ * having no sink is retried on a short schedule before giving up. The
+ * tuiToast service itself arrives with the extensions row, so a send fired
+ * before the seam even exists waits on the same schedule. Retries are
+ * bounded, unref'd, and cleared with the activation; a toast lost to a host
+ * rate limit is not worth fighting — the next real event re-reports.
  * @module dsh-tui-theme/toast
  */
 
@@ -92,8 +94,9 @@ export function startToastRelay(ctx: Context): ToastSend {
   })
 
   const attempt = (text: string, color: ToastColor | undefined, depth: number): boolean => {
-    if (show === undefined) return false
-    if (show(text, color === undefined ? {} : { color })) return true
+    // A seam that has not arrived yet (the extensions row applies after this
+    // plugin) retries on the same bounded schedule as a dropped send.
+    if (show !== undefined && show(text, color === undefined ? {} : { color })) return true
     if (depth >= retryDelays.length) return false
     const timer = setTimeout(() => {
       pending.delete(timer)

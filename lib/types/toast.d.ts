@@ -11,9 +11,11 @@
  *
  * The host registers its toast sink late (the dsh-tui row applies after the
  * extensions row, and both may trail this plugin), so a toast dropped for
- * having no sink is retried on a short schedule before giving up. Retries
- * are bounded, unref'd, and cleared with the activation; a toast lost to a
- * host rate limit is not worth fighting — the next real event re-reports.
+ * having no sink is retried on a short schedule before giving up. The
+ * tuiToast service itself arrives with the extensions row, so a send fired
+ * before the seam even exists waits on the same schedule. Retries are
+ * bounded, unref'd, and cleared with the activation; a toast lost to a host
+ * rate limit is not worth fighting — the next real event re-reports.
  * @module dsh-tui-theme/toast
  */
 import type { Context } from '@deepseek-ai/cordis';
