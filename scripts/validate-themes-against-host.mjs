@@ -1,7 +1,8 @@
 /**
  * Validate bundled themes against matching dsh-TUI source and runtime modules.
- * DSH_TUI_SOURCE_ROOT must point at a dsh-TUI source checkout.
- * DSH_TUI_ADAPTER_DIR must point at the matching lib/types/dsh-adapter directory.
+ * DSH_TUI_SOURCE_ROOT and DSH_TUI_ADAPTER_DIR may point at a matching source
+ * checkout and adapter directory. When omitted, the installed dsh-TUI
+ * devDependency is used as a zero-configuration baseline.
  * Set DSH_TUI_EXPECTED_VERSION only when an explicit release baseline needs
  * to be pinned; ordinary development verifies the supplied host as-is.
  *
@@ -9,25 +10,32 @@
  */
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import ts from 'typescript'
+import { createRequire } from 'node:module'
 
 const pluginRoot = fileURLToPath(new URL('..', import.meta.url))
 const sourceRoot = process.env.DSH_TUI_SOURCE_ROOT
-if (sourceRoot === undefined || sourceRoot === '') {
-  throw new Error('DSH_TUI_SOURCE_ROOT must point at a dsh-TUI source checkout for this host theme validation.')
-}
-const hostRoot = resolve(sourceRoot)
-const customThemePath = join(hostRoot, 'src', 'customTheme.ts')
-const themePath = join(hostRoot, 'src', 'theme.ts')
+const hostRequire = createRequire(import.meta.url)
+const devPackageJson = hostRequire.resolve('@deepseek-harness-tui/dsh-tui/package.json')
+const hostRoot = sourceRoot === undefined || sourceRoot === ''
+  ? dirname(devPackageJson)
+  : resolve(sourceRoot)
+const sourceMode = sourceRoot !== undefined && sourceRoot !== ''
+const customThemePath = sourceMode
+  ? join(hostRoot, 'src', 'customTheme.ts')
+  : join(hostRoot, 'lib', 'types', 'customTheme.js')
+const themePath = sourceMode
+  ? join(hostRoot, 'src', 'theme.ts')
+  : join(hostRoot, 'lib', 'types', 'theme.d.ts')
 
 if (!existsSync(customThemePath) || !existsSync(themePath)) {
-  throw new Error(`dsh-TUI sources not found at ${hostRoot}`)
+  throw new Error(`dsh-TUI ${sourceMode ? 'sources' : 'devDependency build'} not found at ${hostRoot}`)
 }
 
-const hostPackagePath = join(hostRoot, 'package.json')
+const hostPackagePath = sourceMode ? join(hostRoot, 'package.json') : devPackageJson
 if (!existsSync(hostPackagePath)) {
   throw new Error(`dsh-TUI package metadata not found at ${hostPackagePath}`)
 }
@@ -35,10 +43,10 @@ const hostPackage = JSON.parse(readFileSync(hostPackagePath, 'utf8'))
 assert.match(hostPackage.version, /^\d+\.\d+\.\d+(?:[-+].+)?$/u, 'host source must declare a version')
 
 const adapter = process.env.DSH_TUI_ADAPTER_DIR
-if (adapter === undefined || adapter === '') {
+if (sourceMode && (adapter === undefined || adapter === '')) {
   throw new Error('DSH_TUI_ADAPTER_DIR must point at dsh-TUI lib/types/dsh-adapter for this host theme validation.')
 }
-const adapterRoot = resolve(adapter)
+const adapterRoot = resolve(adapter || join(hostRoot, 'lib', 'types', 'dsh-adapter'))
 const runtimeThemePath = join(adapterRoot, '..', 'theme.js')
 const runtimeCustomThemePath = join(adapterRoot, '..', 'customTheme.js')
 if (!existsSync(runtimeThemePath) || !existsSync(runtimeCustomThemePath)) {
@@ -86,7 +94,7 @@ function readThemeKeysFromSource(path) {
   return keys
 }
 
-const allKeys = readThemeKeysFromSource(themePath)
+const allKeys = sourceMode ? readThemeKeysFromSource(themePath) : Object.keys(getTheme('dark'))
 assert.deepEqual(
   [...Object.keys(getTheme('dark'))].sort(),
   [...allKeys].sort(),

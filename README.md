@@ -4,7 +4,7 @@
 
 | 个性化 | 接缝 | 说明 |
 | --- | --- | --- |
-| **三套粉色主题** | 主题（静态资产） | `pink-night` 夜樱 / `pink-day` 昼樱 / `pink-ansi` 樱·ANSI，启动时自动装进 `~/.dsh-tui/themes/` |
+| **三套粉色主题** | 主题运行时（dsh-TUI ≥ 0.10.0）/ 静态资产（旧宿主） | `pink-night` 夜樱 / `pink-day` 昼樱 / `pink-ansi` 樱·ANSI；新宿主优先即时注册，服务晚到时短暂回退并清理本次文件，旧宿主使用 `~/.dsh-tui/themes/` |
 | **缓存背景跟随** | 设置 + 本地缓存 | 可选地应用已有 `theme-follow.json` 的昼樱/夜樱结果；不直接读取终端输入或发送 OSC 查询 |
 | **花符状态行** | `tuiStatus` | 输入框上方一行小装饰：✿ · 时钟 · 实时轮数（默认仅粉主题下显示） |
 | **设置面板** | `tuiSettingsSections` | `/settings` 里一个可编辑区块，改完即时生效 |
@@ -69,9 +69,11 @@ dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-<版本号>.tgz
 dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
 ```
 
-插件只在主题文件缺失时复制，绝不覆盖你编辑过的 `~/.dsh-tui/themes/pink-*.json`。唯一的例外是已损坏的目标文件（无法解析为 JSON，例如安装中途中断留下的残文件）：插件会把它改名为 `<文件名>.corrupt-<时间戳>` 保留现场，再重新安装内置副本，并记录一条警告。升级若需要采用包内的新主题资产，请先备份自己的修改，再删除对应主题文件并重启 dsh-TUI 让插件重装。
+在 dsh-TUI ≥ 0.10.0 中，三套主题通过 `ctx.tuiThemes` 运行时注册：调色板随插件即时生效，正常挂载时不写入用户目录，主题选择器显示中文 `displayName`。若服务晚到，插件会先同步回退到静态路径，并在确认运行时服务后删除本次写入且仍未被改写的文件。旧宿主使用静态文件路径：插件只在主题文件缺失时复制，绝不覆盖你编辑过的 `~/.dsh-tui/themes/pink-*.json`。唯一的例外是已损坏的目标文件（无法解析为 JSON，例如安装中途中断留下的残文件）：插件会把它改名为 `<文件名>.corrupt-<时间戳>` 保留现场，再重新安装内置副本，并记录一条警告。
 
-重启 dsh-TUI 后插件自动把三套主题复制进 `~/.dsh-tui/themes/`（**仅缺失时复制，绝不覆盖你已有的同名文件**），然后：
+从旧宿主升级后，若希望改用运行时托管，请先备份并删除 `~/.dsh-tui/themes/pink-{night,day,ansi}.json`；插件不会自动删除用户文件。
+
+旧宿主重启 dsh-TUI 后插件会把三套主题复制进 `~/.dsh-tui/themes/`（**仅缺失时复制，绝不覆盖你已有的同名文件**）；0.10.0 及更新宿主则直接使用运行时注册，然后：
 
 ```sh
 # 在 dsh-TUI 里
@@ -135,11 +137,11 @@ DSH_TUI_SOURCE_ROOT=/path/to/dsh-TUI-source \
 npm run verify:host
 ```
 
-`verify:host` 必须显式指向同一版本的宿主 adapter 与源码；缺少其中任一项会失败，避免把跳过误报为验证成功。日常开发会验证两者版本一致但不固定版本号；需要锁定一次发布基线时，额外设置 `DSH_TUI_EXPECTED_VERSION=0.9.3`。
+`verify:host` 默认使用开发依赖中的 dsh-TUI（当前为 0.10.0-beta.4）进行零配置验证；需要验证旧版或发布基线时，再显式指向同一版本的宿主 adapter 与源码。需要锁定版本时，额外设置 `DSH_TUI_EXPECTED_VERSION`。
 
 主题调色板改起来最直接：编辑 `themes/*.json` 后重新 `npm run verify`，再删掉 `~/.dsh-tui/themes/` 下对应文件让插件重装。
 
 ## 兼容性
 
-- **dsh-TUI 版本下限：0.8.8**（状态行与设置面板；0.9.3 实测）。更旧的宿主缺 `dsh-tui-extensions` 扩展面时，插件自动降级为“仅安装三套主题”，不报错。
+- **dsh-TUI 版本下限：0.8.8**（状态行与设置面板；0.9.3 实测）。0.10.0 及更新版本使用运行时主题注册；更旧的宿主缺 `dsh-tui-extensions` 扩展面时，插件自动降级为“仅安装三套主题”，不报错。
 - Node `^22.19 || >=24`，纯 ESM，MIT。

@@ -20,11 +20,20 @@ export interface ThemeInstallResult {
     /** Files that could not be installed (per-file failures). */
     readonly failed: readonly string[];
 }
+export interface BundledTheme {
+    readonly file: string;
+    readonly name: string;
+    readonly displayName?: string;
+    readonly base: 'light' | 'dark' | 'dark-ansi';
+    readonly colors: Record<string, string>;
+}
 export declare function homeDir(): string;
 /** The package's bundled themes/ directory (sibling of the built lib/). */
 export declare function bundledThemesDir(): string;
 /** The host's user-theme directory (~/.dsh-tui/themes). */
 export declare function themesTargetDir(): string;
+/** Read bundled descriptors for hosts that support runtime theme registration. */
+export declare function readBundledThemes(sourceDir?: string): BundledTheme[];
 /**
  * Install every bundled theme JSON that the target directory is missing.
  * @param targetDir - Destination directory (defaults to ~/.dsh-tui/themes).
@@ -32,4 +41,10 @@ export declare function themesTargetDir(): string;
  * @returns Per-file outcome. Never throws.
  */
 export declare function installBundledThemes(targetDir?: string, sourceDir?: string): ThemeInstallResult;
+/**
+ * Remove files that this activation installed when a runtime theme service
+ * becomes available. A byte-for-byte check preserves edits made in the small
+ * window between installation and runtime confirmation.
+ */
+export declare function removeBundledThemes(files: readonly string[], targetDir?: string, sourceDir?: string): string[];
 //# sourceMappingURL=themeAssets.d.ts.map

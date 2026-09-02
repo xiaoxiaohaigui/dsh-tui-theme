@@ -17,6 +17,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { TuiSettingsSection } from '@deepseek-harness-tui/dsh-tui/api'
 import z from '@deepseek-ai/schemastery'
 import type { StatusOptions } from './statusLine.js'
 import { PLUGIN_ID } from './pluginId.js'
@@ -38,7 +39,7 @@ interface SettingsServiceLike {
   register(namespace: unknown, schema: unknown): SettingsScopeLike
 }
 interface TuiSettingsSectionsLike {
-  register(section: unknown): () => void
+  register(section: TuiSettingsSection): () => void
 }
 
 /**
@@ -115,7 +116,7 @@ export function registerPinkSettings(
 }
 
 /** The declarative /settings block (labels bilingual, zh via descriptions). */
-function sectionDefinition(cordis: StatusOptions & { followSystem?: boolean }): unknown {
+function sectionDefinition(cordis: StatusOptions & { followSystem?: boolean }): TuiSettingsSection {
   return {
     ns: PLUGIN_ID,
     title: 'pink-theme',

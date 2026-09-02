@@ -2,7 +2,8 @@
  * End-to-end order test with the installed dsh-TUI services. Composes this
  * plugin before the extension services to exercise late service injection.
  *
- * DSH_TUI_ADAPTER_DIR must point at dsh-TUI's lib/types/dsh-adapter directory.
+ * DSH_TUI_ADAPTER_DIR may point at dsh-TUI's lib/types/dsh-adapter directory.
+ * When omitted, the installed devDependency is used.
  * Script-side floor: the adapter must be a built dsh-TUI >= 0.9.0 — the
  * settings-sections module and its getHostSettingsSections probe landed there.
  * Set DSH_TUI_EXPECTED_VERSION only when an explicit release baseline needs
@@ -10,7 +11,7 @@
  */
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 import assert from 'node:assert/strict'
@@ -23,10 +24,10 @@ import { assertSettingsContract, SETTINGS_NAMESPACE } from './expected-settings-
 const STATUS_CONTRIBUTION_KEY = SETTINGS_NAMESPACE
 
 const pluginRoot = fileURLToPath(new URL('..', import.meta.url))
-const adapter = process.env.DSH_TUI_ADAPTER_DIR
-if (adapter === undefined || adapter === '') {
-  throw new Error('DSH_TUI_ADAPTER_DIR must point at dsh-TUI lib/types/dsh-adapter for this host integration test.')
-}
+const req = createRequire(import.meta.url)
+const packageJson = req.resolve('@deepseek-harness-tui/dsh-tui/package.json')
+const devHostRoot = dirname(packageJson)
+const adapter = process.env.DSH_TUI_ADAPTER_DIR || join(devHostRoot, 'lib', 'types', 'dsh-adapter')
 
 if (!existsSync(join(adapter, 'extensions.js'))) {
   throw new Error(`dsh-TUI adapter not found at ${adapter}`)
@@ -63,17 +64,28 @@ if (!existsSync(settingsSectionsPath)) {
   )
 }
 
-const req = createRequire(join(adapter, 'extensions.js'))
-const { Context } = await import(pathToFileURL(req.resolve('@deepseek-ai/cordis')).href)
+const hostRequire = createRequire(join(adapter, 'extensions.js'))
+const { Context } = await import(pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis')).href)
 const extensions = await import(pathToFileURL(join(adapter, 'extensions.js')).href)
-const ledgerModule = await import(pathToFileURL(join(adapter, 'effect-ledger.js')).href)
 const statusModule = await import(pathToFileURL(join(adapter, 'status.js')).href)
 const settingsSectionsModule = await import(pathToFileURL(settingsSectionsPath).href)
+const pluginHostModule = await import(pathToFileURL(join(adapter, 'plugin-host.js')).href)
 const pink = await import(pathToFileURL(join(pluginRoot, 'lib', 'types', 'index.js')).href)
 
 const app = new Context()
-await app.plugin(ledgerModule.default)
-await app.plugin(pink)
+await app.plugin(pluginHostModule.default ?? pluginHostModule)
+const testUtilsPath = join(adapter, '..', 'test-utils.js')
+if (existsSync(testUtilsPath)) {
+  const testUtils = await import(pathToFileURL(testUtilsPath).href)
+  const manifest = testUtils.testManifest({ id: SETTINGS_NAMESPACE })
+  const admitted = await testUtils.mountAdmitted(app, SETTINGS_NAMESPACE, manifest)
+  await admitted.context.plugin(pink)
+} else {
+  // dsh-TUI < 0.10 has no public admission test helpers; keep the historical
+  // manual mount and report the structural limitation instead of hiding it.
+  console.log('* mountAdmitted unavailable on this host; using manual plugin mount')
+  await app.plugin(pink)
+}
 await app.plugin(extensions.default ?? extensions)
 await app.plugin(settingsSectionsModule.default ?? settingsSectionsModule)
 

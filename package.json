@@ -28,7 +28,7 @@
     "preverify": "npm run build",
     "verify": "node scripts/verify.mjs",
     "verify:package": "node scripts/verify-package.mjs",
-    "verify:host": "npm run build && node scripts/headless-order-test.mjs && node --import tsx/esm scripts/validate-themes-against-host.mjs",
+    "verify:host": "npm run build && node scripts/headless-order-test.mjs && node scripts/runtime-themes-headless.mjs && node --import tsx/esm scripts/validate-themes-against-host.mjs",
     "release:check": "npm run build && npm run verify && npm run verify:package",
     "prepack": "npm run release:check"
   },

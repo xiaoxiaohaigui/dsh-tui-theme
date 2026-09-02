@@ -3,7 +3,7 @@
  *
  * 个性化全部走既有接缝，不注册快捷键、不注册命令、不拦截任何输入：
  * - 接缝四（主题）：内置三套粉色 JSON（pink-night / pink-day / pink-ansi），
- *   启动时复制进 ~/.dsh-tui/themes/（仅缺失时，绝不覆盖用户已有文件）；
+ *   新宿主通过运行时服务注册，旧宿主同步复制进 ~/.dsh-tui/themes/（仅缺失时）；
  * - 缓存背景跟随：安全应用已有的终端背景缓存，在昼樱/夜樱间切换；
  *   dsh-TUI 未提供插件终端查询接缝时，不直接读写 stdin、raw mode 或 OSC 11；
  * - 接缝十一（状态行）：输入框上方一行小装饰（✿ · 时钟 · 本轮轮数）；
@@ -17,7 +17,8 @@
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { installBundledThemes, homeDir } from './themeAssets.js'
+import { installBundledThemes, homeDir, removeBundledThemes } from './themeAssets.js'
+import { startRuntimeThemes } from './runtimeThemes.js'
 import { startStatusLine, type EffectiveStatus, type StatusScope } from './statusLine.js'
 import { runFollowSystem } from './autoTheme.js'
 import { registerPinkSettings, type PinkSettingsDoc } from './settingsSection.js'
@@ -80,7 +81,15 @@ export function apply(ctx: Context, config: Config = {}): void {
     statusScope: config.statusScope ?? DEFAULTS.statusScope,
   }
 
-  if (cordis.autoInstallThemes) {
+  // New hosts own the palette in memory. Install synchronously first so an old
+  // host can resolve a persisted theme during its first render. If a runtime
+  // service appears afterwards, remove only files written by this activation
+  // before registering the in-memory palettes.
+  let runtimeConfirmed = false
+  const ownedStaticFiles = new Set<string>()
+  const installStatic = (): void => {
+    if (runtimeConfirmed) return
+    if (!cordis.autoInstallThemes) return
     const result = installBundledThemes()
     for (const file of result.installed) {
       ctx.logger.info(`${PLUGIN_ID}: installed bundled theme "${file}" into ~/.dsh-tui/themes/`)
@@ -93,6 +102,30 @@ export function apply(ctx: Context, config: Config = {}): void {
     for (const file of result.failed) {
       ctx.logger.warn(`${PLUGIN_ID}: could not install bundled theme "${file}"`)
     }
+    for (const file of [...result.installed, ...result.repaired]) ownedStaticFiles.add(file)
+  }
+  const markRuntimeAvailable = (): void => {
+    runtimeConfirmed = true
+    if (ownedStaticFiles.size > 0) {
+      removeBundledThemes([...ownedStaticFiles])
+      ownedStaticFiles.clear()
+    }
+  }
+  let runtimePresent = false
+  try {
+    runtimePresent = ctx.get('tuiThemes', false) !== undefined
+  } catch {
+    runtimePresent = false
+  }
+  if (runtimePresent) {
+    runtimeConfirmed = true
+    startRuntimeThemes(ctx)
+  } else {
+    installStatic()
+    ctx.effect(() => () => {
+      ownedStaticFiles.clear()
+    })
+    startRuntimeThemes(ctx, markRuntimeAvailable)
   }
 
   // The /settings user layer (settings.yaml) overrides the cordis layer and

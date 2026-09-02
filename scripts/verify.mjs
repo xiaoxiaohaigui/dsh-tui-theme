@@ -44,7 +44,7 @@ const builtinFs = require('node:fs')
 const sandboxThemes = join(sandboxHome, '.dsh-tui', 'themes')
 
 const { name, apply } = await import('../lib/types/index.js')
-const { installBundledThemes } = await import('../lib/types/themeAssets.js')
+const { installBundledThemes, readBundledThemes } = await import('../lib/types/themeAssets.js')
 const { startStatusLine } = await import('../lib/types/statusLine.js')
 const {
   themeForBackground,
@@ -56,16 +56,24 @@ const {
 } = await import('../lib/types/autoTheme.js')
 
 assert.equal(name, 'dsh-tui-theme')
+const settle = () => new Promise(resolve => setTimeout(resolve, 0))
+const applyAndSettle = async (ctx, config) => {
+  apply(ctx, config)
+  await settle()
+}
 
 /** A stub Cordis-like context; every seam optional and recorded. */
-function makeStubCtx({ status, sections, settingsService } = {}) {
-  const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], warnings: [], infos: [] }
+function makeStubCtx({ status, sections, settingsService, themes, deferThemes = false } = {}) {
+  const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], themeRegisters: [], warnings: [], infos: [] }
+  let availableThemes = themes
+  const deferredThemeCallbacks = []
   const logger = { info: msg => record.infos.push(String(msg)), warn: msg => record.warnings.push(String(msg)), error: () => {} }
   const base = {
     logger,
     get(serviceName) {
       if (serviceName === 'tuiStatus') return status
       if (serviceName === 'tuiSettingsSections') return sections
+      if (serviceName === 'tuiThemes') return availableThemes
       return undefined
     },
     on(event, handler) {
@@ -85,6 +93,11 @@ function makeStubCtx({ status, sections, settingsService } = {}) {
         settings: settingsService,
         tuiStatus: status,
         tuiSettingsSections: sections,
+        tuiThemes: availableThemes,
+      }
+      if (deferThemes && availableThemes === undefined && deps.includes('tuiThemes')) {
+        deferredThemeCallbacks.push(callback)
+        return
       }
       if (deps.every(dep => services[dep] !== undefined)) {
         const props = Object.fromEntries(deps.map(dep => [dep, services[dep]]))
@@ -92,11 +105,22 @@ function makeStubCtx({ status, sections, settingsService } = {}) {
       }
     },
   }
+  record.activateThemes = service => {
+    availableThemes = service
+    for (const callback of deferredThemeCallbacks.splice(0)) callback({ ...base, tuiThemes: service })
+  }
   return { ctx: base, record }
 }
 
 const fakeStatus = calls => ({ set(key, text) { calls.push([key, text]); return () => {} } })
 const fakeSections = calls => ({ register(section) { calls.push(section); return () => {} } })
+const fakeThemes = (record, { throws = false } = {}) => ({
+  register(descriptor, identity) {
+    record.themeRegisters.push([descriptor, identity])
+    if (throws) throw new Error('runtime registry unavailable')
+    return () => {}
+  },
+})
 const fakeSettingsService = (record, doc) => ({
   register(namespace, schema) {
     record.registerCalls.push([namespace, schema])
@@ -138,7 +162,7 @@ const emit = (record, event, ...args) => {
     sections: fakeSections(sectionsCalls),
     settingsService: fakeSettingsService(settingsRecord, {}),
   })
-  apply(ctx)
+  await applyAndSettle(ctx)
 
   // Themes installed into the SANDBOX, never the real home.
   for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
@@ -176,8 +200,62 @@ const emit = (record, event, ...args) => {
   console.log('✓ full host: themes installed, status line live, settings wired')
 }
 
+// ── 2a. runtime themes: service owns palettes and static files stay absent ───
+{
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  const registrations = []
+  const themes = { register(descriptor, identity) { registrations.push([descriptor, identity]); return () => {} } }
+  const { ctx } = makeStubCtx({ themes })
+  await applyAndSettle(ctx)
+  assert.equal(existsSync(sandboxThemes), false, 'runtime registration must not create static files')
+  const expected = readBundledThemes().map(({ file, ...theme }) => theme)
+  assert.deepEqual(registrations.map(([descriptor]) => descriptor), expected)
+  assert.equal(
+    registrations.every(([, identity]) => identity?.tuiThemes !== undefined),
+    true,
+    'runtime registrations use the inject-scoped identity',
+  )
+  console.log('✓ runtime themes: three descriptors registered without static files')
+}
+
+// ── 2b. late runtime service: confirmation removes this activation's files ──
+{
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  const { ctx, record } = makeStubCtx({ deferThemes: true })
+  apply(ctx)
+  assert.equal(existsSync(sandboxThemes), true, 'legacy fallback must install synchronously before service arrival')
+  record.activateThemes(fakeThemes(record))
+  await settle()
+  assert.equal(existsSync(sandboxThemes), false, 'late runtime service must remove all fallback files and the empty directory')
+
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  const protectedContext = makeStubCtx({ deferThemes: true })
+  apply(protectedContext.ctx)
+  assert.equal(existsSync(sandboxThemes), true, 'legacy fallback must install before protecting a user edit')
+  const protectedTheme = join(sandboxThemes, 'pink-night.json')
+  writeFileSync(protectedTheme, '{ "name": "pink-night", "colors": { "text": "#123456" } }')
+  protectedContext.record.activateThemes(fakeThemes(protectedContext.record))
+  await settle()
+  assert.equal(existsSync(join(sandboxThemes, 'pink-day.json')), false, 'late runtime service must remove plugin-owned files')
+  assert.equal(existsSync(join(sandboxThemes, 'pink-ansi.json')), false, 'late runtime service must remove plugin-owned files')
+  assert.equal(readFileSync(protectedTheme, 'utf8'), '{ "name": "pink-night", "colors": { "text": "#123456" } }')
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  console.log('✓ runtime race: late service wins and removes static fallback files')
+}
+
+// ── 2c. hostile runtime service: registration failures degrade to warnings ───
+{
+  const themeRecord = { themeRegisters: [] }
+  const { ctx, record } = makeStubCtx({ themes: fakeThemes(themeRecord, { throws: true }) })
+  await applyAndSettle(ctx)
+  assert.equal(record.warnings.length, 3, 'each hostile registration is contained and warned')
+  console.log('✓ hostile runtime service: registration failures warn, never propagate')
+}
+
 // ── 3. idempotence + user-file protection ───────────────────────────────────
 {
+  const seeded = installBundledThemes()
+  assert.equal(seeded.installed.length, 3)
   const again = installBundledThemes()
   assert.deepEqual(again.installed, [])
   assert.deepEqual(again.repaired, [])
@@ -197,7 +275,7 @@ const emit = (record, event, ...args) => {
   rmSync(sandboxHome, { recursive: true, force: true })
   mkdirSync(sandboxHome, { recursive: true })
   const { ctx } = makeStubCtx()
-  apply(ctx, { autoInstallThemes: false })
+  await applyAndSettle(ctx, { autoInstallThemes: false })
   assert.equal(existsSync(join(sandboxHome, '.dsh-tui')), false, 'must not create the dir when disabled')
   console.log('✓ autoInstallThemes=false: leaves the themes dir untouched')
 }
@@ -234,7 +312,7 @@ const emit = (record, event, ...args) => {
 {
   const statusCalls = []
   const { ctx } = makeStubCtx({ status: fakeStatus(statusCalls) })
-  apply(ctx, { statusEnabled: false })
+  await applyAndSettle(ctx, { statusEnabled: false })
   assert.equal(statusCalls.length > 0, true, 'render still ran once')
   // Every contribution is cleared (undefined), not rendered.
   for (const [, text] of statusCalls) assert.equal(text, undefined)
@@ -252,7 +330,7 @@ const emit = (record, event, ...args) => {
     sections: fakeSections([]),
     settingsService: fakeSettingsService(settingsRecord, {}),
   })
-  apply(ctx, { followSystem: true })
+  await applyAndSettle(ctx, { followSystem: true })
   // Cordis layer on, empty user layer, no cache yet -> no pref churn.
   assert.equal(existsSync(join(dataDir, 'theme.json')), false)
 
@@ -277,7 +355,7 @@ const emit = (record, event, ...args) => {
     status: fakeStatus(statusCalls),
     settingsService: fakeSettingsService(settingsRecord, {}),
   })
-  apply(ctx)
+  await applyAndSettle(ctx)
   const session = { id: 'g1' }
 
   // Pink active → renders.
@@ -318,7 +396,7 @@ const emit = (record, event, ...args) => {
     register() { throw new Error('namespace already registered (hot reload)') },
   }
   const { ctx, record } = makeStubCtx({ settingsService: throwingSettings })
-  apply(ctx) // must not throw
+  await applyAndSettle(ctx) // must not throw
   assert.equal(record.warnings.length, 1, 'registration failure logs one warning')
   assert.match(record.warnings[0], /settings namespace registration failed/)
   console.log('✓ hostile settings service: registration failure warns, never propagates')
@@ -331,7 +409,7 @@ const emit = (record, event, ...args) => {
   writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
   writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
   const { ctx } = makeStubCtx()
-  apply(ctx, { followSystem: true })
+  await applyAndSettle(ctx, { followSystem: true })
   assert.equal(readThemePref(dataDir), 'dark', 'without settings, cached follow must not override manual choice')
   console.log('✓ missing settings: cached follow leaves the manual choice intact')
 }
@@ -431,6 +509,27 @@ const emit = (record, event, ...args) => {
     builtinFs.readFileSync = originalRead
     syncBuiltinESMExports()
   }
+
+  // A successful backup followed by a failed replacement is a failure, not a
+  // protected skip: the target is absent until the next boot can retry.
+  const failedHeal = join(targetDir, 'pink-ansi.json')
+  writeFileSync(failedHeal, '{ broken')
+  const originalWrite = builtinFs.writeFileSync
+  try {
+    builtinFs.writeFileSync = (path, data, options) => {
+      if (String(path) === failedHeal && options?.flag === 'wx' && !existsSync(failedHeal)) {
+        throw new Error('ENOSPC: replacement blocked')
+      }
+      return originalWrite(path, data, options)
+    }
+    syncBuiltinESMExports()
+    const failed = installBundledThemes(targetDir, sourceDir)
+    assert.equal(failed.failed.includes('pink-ansi.json'), true)
+    assert.equal(failed.skipped.includes('pink-ansi.json'), false)
+  } finally {
+    builtinFs.writeFileSync = originalWrite
+    syncBuiltinESMExports()
+  }
   console.log('✓ torn installation: corrupt target backed up and reinstalled; user files and unreadable targets untouched')
 }
 
@@ -439,7 +538,7 @@ const emit = (record, event, ...args) => {
   // Default user layer (empty doc): no spurious "follow: disabled" line.
   const settingsRecord = { registerCalls: [], watchers: [] }
   const { ctx, record } = makeStubCtx({ settingsService: fakeSettingsService(settingsRecord, {}) })
-  apply(ctx)
+  await applyAndSettle(ctx)
   assert.equal(
     record.infos.some(message => message.includes('follow: disabled')),
     false,
@@ -455,7 +554,7 @@ const emit = (record, event, ...args) => {
     sections: fakeSections([]),
     settingsService: fakeSettingsService(enabledRecord, { followSystem: true }),
   })
-  apply(enabledCtx)
+  await applyAndSettle(enabledCtx)
   assert.equal(readThemePref(dataDir), 'pink-day', 'an enabled baseline applies the cached background')
   assert.equal(
     enabledInfo.infos.some(message => message.includes('follow: disabled')),

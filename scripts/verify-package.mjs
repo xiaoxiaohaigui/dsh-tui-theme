@@ -49,6 +49,7 @@ for (const required of [
   'scripts/verify.mjs',
   'scripts/verify-package.mjs',
   'scripts/headless-order-test.mjs',
+  'scripts/runtime-themes-headless.mjs',
   'scripts/validate-themes-against-host.mjs',
   'scripts/expected-settings-contract.mjs',
 ]) {
@@ -68,7 +69,15 @@ for (const entry of exportedPaths) {
 for (const name of Object.keys(packageJson.peerDependencies)) {
   if (!name.startsWith('@deepseek-ai/')) continue
   assert.equal(packageJson.dependencies?.[name], undefined, `${name} must not be a runtime dependency`)
-  assert.equal(packageJson.devDependencies?.[name], packageJson.peerDependencies[name], `${name} peer and dev ranges must match`)
+  const peerRange = packageJson.peerDependencies[name]
+  const devRange = packageJson.devDependencies?.[name]
+  // Development baselines may pin one concrete prerelease while the published
+  // peer contract remains a union of compatible release lines.
+  const devAccepted = peerRange.split('||').some(entry => {
+    const candidate = entry.trim()
+    return candidate === devRange || candidate.replace(/^\^/u, '') === devRange
+  })
+  assert.equal(devAccepted, true, `${name} dev pin must be accepted by its peer range`)
 }
 assert.equal(packageJson.dependencies?.['@deepseek-ai/schemastery'], undefined)
 const rootLock = lockfile.packages?.['']

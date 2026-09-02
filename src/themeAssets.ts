@@ -11,7 +11,7 @@
  * @module dsh-tui-theme/themeAssets
  */
 
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,6 +25,14 @@ export interface ThemeInstallResult {
   readonly repaired: readonly string[]
   /** Files that could not be installed (per-file failures). */
   readonly failed: readonly string[]
+}
+
+export interface BundledTheme {
+  readonly file: string
+  readonly name: string
+  readonly displayName?: string
+  readonly base: 'light' | 'dark' | 'dark-ansi'
+  readonly colors: Record<string, string>
 }
 
 // Same resolution order as the host's utils/paths.ts homeDir(): os.homedir()
@@ -41,6 +49,51 @@ export function bundledThemesDir(): string {
 /** The host's user-theme directory (~/.dsh-tui/themes). */
 export function themesTargetDir(): string {
   return join(homeDir(), '.dsh-tui', 'themes')
+}
+
+/** Read bundled descriptors for hosts that support runtime theme registration. */
+export function readBundledThemes(sourceDir: string = bundledThemesDir()): BundledTheme[] {
+  let files: string[]
+  try {
+    files = readdirSync(sourceDir).filter(entry => entry.toLowerCase().endsWith('.json'))
+  } catch (error) {
+    console.warn(`dsh-tui-theme: could not read bundled themes from ${sourceDir}: ${String(error)}`)
+    return []
+  }
+  const themes: BundledTheme[] = []
+  for (const file of files) {
+    try {
+      const value = JSON.parse(readFileSync(join(sourceDir, file), 'utf8')) as Record<string, unknown>
+      const name = value.name
+      const base = value.base
+      const colors = value.colors
+      if (
+        typeof name !== 'string' ||
+        !/^[a-z][a-z0-9_-]*(?::[a-z][a-z0-9_-]*)?$/u.test(name) ||
+        (base !== 'light' && base !== 'dark' && base !== 'dark-ansi') ||
+        colors === null ||
+        typeof colors !== 'object' ||
+        Array.isArray(colors)
+      ) {
+        throw new Error('invalid theme descriptor')
+      }
+      const normalizedColors: Record<string, string> = {}
+      for (const [key, color] of Object.entries(colors as Record<string, unknown>)) {
+        if (typeof color !== 'string') throw new Error(`invalid color for ${key}`)
+        normalizedColors[key] = color
+      }
+      themes.push({
+        file,
+        name,
+        ...(typeof value.displayName === 'string' ? { displayName: value.displayName } : {}),
+        base,
+        colors: normalizedColors,
+      })
+    } catch (error) {
+      console.warn(`dsh-tui-theme: skipping bundled theme ${file}: ${String(error)}`)
+    }
+  }
+  return themes
 }
 
 /**
@@ -74,7 +127,9 @@ export function installBundledThemes(
         installed.push(file)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-          if (healCorruptTarget(target, text)) repaired.push(file)
+          const healed = healCorruptTarget(target, text)
+          if (healed === 'repaired') repaired.push(file)
+          else if (healed === 'failed') failed.push(file)
           else skipped.push(file)
         } else {
           failed.push(file)
@@ -88,32 +143,70 @@ export function installBundledThemes(
 }
 
 /**
+ * Remove files that this activation installed when a runtime theme service
+ * becomes available. A byte-for-byte check preserves edits made in the small
+ * window between installation and runtime confirmation.
+ */
+export function removeBundledThemes(
+  files: readonly string[],
+  targetDir: string = themesTargetDir(),
+  sourceDir: string = bundledThemesDir(),
+): string[] {
+  const removed: string[] = []
+  for (const file of files) {
+    try {
+      const bundled = readFileSync(join(sourceDir, file), 'utf8')
+      const target = join(targetDir, file)
+      if (readFileSync(target, 'utf8') !== bundled) continue
+      unlinkSync(target)
+      removed.push(file)
+    } catch {
+      // Runtime registration must remain best-effort if a file disappears or
+      // the target directory becomes unavailable during teardown.
+    }
+  }
+  if (removed.length > 0) {
+    try {
+      if (readdirSync(targetDir).length === 0) rmdirSync(targetDir)
+    } catch {
+      // An empty directory is only a cosmetic artifact; leave it in place if
+      // it was removed concurrently or is no longer empty.
+    }
+  }
+  return removed
+}
+
+/**
  * Self-heal an existing target that fails to parse as JSON — the leftover of
  * a torn write from an interrupted installation. The damaged file is kept as
- * <target>.corrupt-<timestamp> and the bundled copy installed fresh. Returns
- * false (leave untouched) when the target is valid JSON (a user file the
- * never-overwrite rule protects), unreadable (unreadable is not proven
- * corrupt), or when the backup/replace itself fails (degrade to the plain
- * silent skip).
+ * <target>.corrupt-<timestamp>-<pid>-<random> and the bundled copy installed
+ * fresh. Returns `skipped` when the target is valid JSON or unreadable, and
+ * `failed` when the corrupt target was moved but replacement could not finish.
  */
-function healCorruptTarget(target: string, text: string): boolean {
+function healCorruptTarget(target: string, text: string): 'repaired' | 'skipped' | 'failed' {
   let existing: string
   try {
     existing = readFileSync(target, 'utf8')
   } catch {
-    return false
+    return 'skipped'
   }
   try {
     JSON.parse(existing)
-    return false
+    return 'skipped'
   } catch {
     // Proven corrupt: fall through to backup and reinstall.
   }
+  let backup: string
   try {
-    renameSync(target, `${target}.corrupt-${Date.now()}`)
-    writeFileSync(target, text, { flag: 'wx' })
-    return true
+    backup = `${target}.corrupt-${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}`
+    renameSync(target, backup)
   } catch {
-    return false
+    return 'skipped'
+  }
+  try {
+    writeFileSync(target, text, { flag: 'wx' })
+    return 'repaired'
+  } catch {
+    return 'failed'
   }
 }
