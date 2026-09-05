@@ -8,8 +8,16 @@
  *
  * The line belongs to the pink palettes: by default it only renders while a
  * pink theme is active (checked per render with the host's own theme
- * precedence, so a mid-session /theme switch takes effect on the next tick);
- * `statusScope: 'all-themes'` opts it into every other theme too.
+ * precedence, so a mid-session /theme switch takes effect within the pref
+ * cache TTL — at most one clock tick); `statusScope: 'all-themes'` opts it
+ * into every other theme too.
+ *
+ * Cost discipline: `session/event` is a token-level firehose (assistant/chunk
+ * et al.), but the rendered text only changes at turn boundaries and on the
+ * clock, so renders run on turn/start, turn/end, session/disposed, and the
+ * 15s tick — never per streamed chunk. The persisted-pref read behind the
+ * theme check is cached for the same tick length so a render is pure string
+ * building.
  * @module dsh-tui-theme/statusLine
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -29,6 +37,11 @@ export interface StatusOptions {
 }
 /** Fully-resolved status knobs. */
 export type EffectiveStatus = Required<StatusOptions>;
+/**
+ * @internal Drop the persisted-pref cache (verify.mjs only; not part of the
+ * plugin's behavioral contract). Production invalidation is the TTL.
+ */
+export declare function invalidateThemePrefCacheForTests(): void;
 /**
  * Start the status line inside the `tuiStatus` inject.
  *

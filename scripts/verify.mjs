@@ -45,7 +45,7 @@ const sandboxThemes = join(sandboxHome, '.dsh-tui', 'themes')
 
 const { name, apply } = await import('../lib/types/index.js')
 const { installBundledThemes, readBundledThemes, findShadowedBundledThemes } = await import('../lib/types/themeAssets.js')
-const { startStatusLine } = await import('../lib/types/statusLine.js')
+const { startStatusLine, invalidateThemePrefCacheForTests } = await import('../lib/types/statusLine.js')
 const { setToastRetryDelaysForTests } = await import('../lib/types/toast.js')
 const {
   themeForBackground,
@@ -399,8 +399,10 @@ const emit = (record, event, ...args) => {
   emit(record, 'session/event', session, { type: 'turn/end' })
   assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 1✦$/)
 
-  // Non-pink theme active → hidden by default.
+  // Non-pink theme active → hidden by default. The pref cache is dropped so
+  // the rewrite is visible immediately (production invalidation is the TTL).
   writeFileSync(themePrefPath, JSON.stringify({ theme: 'dark' }, null, 2))
+  invalidateThemePrefCacheForTests()
   emit(record, 'session/event', session, { type: 'turn/end' })
   assert.equal(statusCalls.at(-1)[1], undefined)
 
@@ -835,6 +837,84 @@ const emit = (record, event, ...args) => {
   rmSync(sandboxThemes, { recursive: true, force: true })
   setToastRetryDelaysForTests([2_000, 4_000])
   console.log('✓ toast feedback: follow/self-heal/shadow hints delivered, dropped and seam-less sends retried, legacy hosts silent and bounded')
+}
+
+// ── 14. hot path: the token firehose must not reach render or the disk ──────
+{
+  const themePrefPath = join(sandboxHome, '.dsh-tui', 'theme.json')
+  writeFileSync(themePrefPath, JSON.stringify({ theme: 'pink-night' }, null, 2))
+  // Earlier scenarios ran status activations against a different pref; drop
+  // their cached answer so this scenario starts from the fresh sandbox state.
+  invalidateThemePrefCacheForTests()
+  const statusCalls = []
+  const settingsRecord = { registerCalls: [], watchers: [] }
+  const { ctx, record } = makeStubCtx({
+    status: fakeStatus(statusCalls),
+    settingsService: fakeSettingsService(settingsRecord, {}),
+  })
+  await applyAndSettle(ctx)
+  const session = { id: 'h1' }
+  emit(record, 'session/event', session, { type: 'turn/end' })
+  const baselineCalls = statusCalls.length
+  assert.match(statusCalls.at(-1)[1], /1✦$/)
+
+  // A firehose burst (streaming chunks, tool traffic, step brackets) updates
+  // the tracked session but must render nothing and never touch the disk.
+  const originalRead = builtinFs.readFileSync
+  let prefReads = 0
+  try {
+    builtinFs.readFileSync = (path, ...rest) => {
+      if (String(path) === themePrefPath) prefReads += 1
+      return originalRead(path, ...rest)
+    }
+    syncBuiltinESMExports()
+    for (let index = 0; index < 50; index += 1) {
+      emit(record, 'session/event', session, {
+        type: 'assistant/chunk',
+        turn: 1,
+        step: 1,
+        chunk: { type: 'text', text: 'x' },
+      })
+    }
+    emit(record, 'session/event', session, {
+      type: 'tool/call', turn: 1, step: 1, callId: 'c1', name: 'tool', arguments: '{}',
+    })
+    emit(record, 'session/event', session, { type: 'step/end', turn: 1, step: 1 })
+    emit(record, 'session/event', session, { type: 'todo/write', todos: [] })
+    assert.equal(statusCalls.length, baselineCalls, 'firehose events render nothing')
+    assert.equal(prefReads, 0, 'firehose events never read the theme pref')
+
+    // A turn boundary renders — served by the warm pref cache (no disk hit
+    // within the TTL), so even boundary renders stay off the filesystem.
+    emit(record, 'session/event', session, { type: 'turn/end' })
+    assert.equal(statusCalls.length, baselineCalls + 1, 'a turn boundary renders')
+    assert.equal(prefReads, 0, 'the warm cache serves the boundary render')
+
+    // A session switch repaints at its first turn/start with a fresh count.
+    const nextSession = { id: 'h2' }
+    emit(record, 'session/event', nextSession, { type: 'turn/start' })
+    assert.equal(statusCalls.length, baselineCalls + 2)
+    assert.match(statusCalls.at(-1)[1], /0✦$/)
+    assert.equal(prefReads, 0)
+
+    // Inside the TTL a pref rewrite is not yet visible and costs no read…
+    writeFileSync(themePrefPath, JSON.stringify({ theme: 'dark' }, null, 2))
+    emit(record, 'session/event', nextSession, { type: 'turn/end' })
+    assert.equal(statusCalls.length, baselineCalls + 3)
+    assert.match(statusCalls.at(-1)[1], /1✦$/, 'the cached pink pref keeps the line visible')
+    assert.equal(prefReads, 0, 'the TTL serves the stale-but-pink answer without I/O')
+
+    // …after invalidation (TTL expiry in production) the next render re-reads.
+    invalidateThemePrefCacheForTests()
+    emit(record, 'session/event', nextSession, { type: 'turn/end' })
+    assert.equal(prefReads, 1, 'invalidation re-reads the pref exactly once')
+    assert.equal(statusCalls.at(-1)[1], undefined, 'the non-pink pref hides the line')
+  } finally {
+    builtinFs.readFileSync = originalRead
+    syncBuiltinESMExports()
+    invalidateThemePrefCacheForTests()
+  }
+  console.log('✓ hot path: firehose events render nothing and never read the pref; boundaries use the cache')
 }
 
 console.log('\nAll plugin verifications passed.')
