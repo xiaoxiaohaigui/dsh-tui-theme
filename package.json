@@ -1,6 +1,6 @@
 {
   "name": "dsh-tui-theme",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Sakura-pink themes for dsh-TUI with optional cached background follow (pink-day/pink-night), a blossom status line, and a /settings section. No shortcuts, no commands.",
   "type": "module",
   "main": "lib/types/index.js",
