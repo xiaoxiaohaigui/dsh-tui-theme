@@ -16,7 +16,7 @@
 
 | 主题 | 基底 | 风格 |
 | --- | --- | --- |
-| `pink-night` 夜樱 | dark | 暗梅底、玫瑰粉强调，95 键全覆盖 |
+| `pink-night` 夜樱 | dark | 暗梅底、玫瑰粉强调，宿主 Theme 全键覆盖（0.10.x 为 73 语义键，旧键名经宿主别名映射兼容） |
 | `pink-day` 昼樱 | light | 象牙粉底、墨梅正文、柔和玫瑰强调（已通过宿主浅色身份判定） |
 | `pink-ansi` 樱·ANSI | dark-ansi | 16 色 ANSI 回退，品牌色映射到 magenta 系 |
 
@@ -123,7 +123,7 @@ dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
 | 输入框 ❯ 提示符 | 默认态无颜色参数（终端默认前景色，模型工作时变暗）；最高推理档充能动画用**写死的蓝色 ramp**（深色端 `#82B9FF` / 浅色端 `#1E5FEB`） | `EffortChargeGlyph.tsx`、`trajectory/effortIgnition.ts` |
 | 底栏上下文进度条分段色 | system / prompt / assistant / thinking / tools 五段为**写死的藏青→品牌蓝系**（`#22305F`→`#5A7CFF`），永远不随主题变化 | `screens/StatusMetrics.ts` |
 | 进度条空余段配色 | 宿主按 `themeName === 'light'` **字符串比较**取浅色配色——自定义浅色主题（如 pink-day）不等于 `'light'`，会拿到深色空余段，在浅色终端上偏深 | `screens/StatusLine.tsx` |
-| 状态行文字颜色 | 插件状态行（tuiStatus）由宿主统一以**无色 + 终端 dim** 渲染，插件无法指定颜色（✿ 行因此继承终端默认前景色） | `screens/Chat.tsx` |
+| 状态行文字颜色 | 标量状态行（`tuiStatus.set`）由宿主统一以**无色 + 终端 dim** 渲染，插件无法指定颜色（✿ 行因此继承终端默认前景色）；dsh-TUI ≥ 0.10.1 另提供 `tuiStatus.registerView` 有界富状态视图（≤3 行、宿主主题化渲染、pointer-only、被拒返回 undefined），可突破该限制，插件暂未采用 | `screens/Chat.tsx`、`dsh-adapter/status.ts` |
 | 输入框块状光标 | 宿主挂载期间隐藏终端原生光标（`?25l`），输入框光标由应用以**反色字符**自绘（`<Text inverse>`），颜色即主题 text/background 的反色——OSC 12 光标色只能染到不可见的原生光标，插件无法给输入光标上色（辅助功能模式 `CLAUDE_CODE_ACCESSIBILITY=1` 下原生光标才可见） | `ink/components/App.tsx`、`components/PromptInput.tsx` |
 | 正文链接 | OSC 8 超链接默认**写死的 ANSI 蓝**（`chalk.blue`）；注释说明 wrap-ansi 无法跨 OSC 8 保留主题 RGB 色，故链接色不读主题键 | `cc/hyperlink.ts` |
 | 顶栏像素鲸鱼颜色 | 四色调色板（描边/身体/腹部/嘴）**写死**且模块加载时预渲染，不读取任何主题键——任何主题都无法改变鲸鱼配色 | `components/Whale.tsx` |
@@ -156,7 +156,7 @@ DSH_TUI_SOURCE_ROOT=/path/to/dsh-TUI-source \
 npm run verify:host
 ```
 
-`verify:host` 默认使用开发依赖中的 dsh-TUI（当前为 0.10.0-beta.4）进行零配置验证；需要验证旧版或发布基线时，再显式指向同一版本的宿主 adapter 与源码。需要锁定版本时，额外设置 `DSH_TUI_EXPECTED_VERSION`。
+`verify:host` 默认使用开发依赖中的 dsh-TUI（当前为 0.10.1）进行零配置验证；需要验证旧版或发布基线时，再显式指向同一版本的宿主 adapter 与源码。需要锁定版本时，额外设置 `DSH_TUI_EXPECTED_VERSION`。
 
 主题调色板改起来最直接：编辑 `themes/*.json` 后重新 `npm run verify`，再删掉 `~/.dsh-tui/themes/` 下对应文件让插件重装。
 

@@ -100,7 +100,10 @@ assert.deepEqual(
   [...allKeys].sort(),
   'compiled theme keys must match the checked-out host source',
 )
-assert.ok(allKeys.length >= 90, 'host Theme key count drifted; re-check coverage')
+// The absolute key floor from the 96-key era does not survive the 0.10.1
+// semantic refactor (73 canonical keys); per-key coverage below is the real
+// guarantee, so the count is reported instead of pinned to a hardcoded floor.
+console.log(`* host Theme key count: ${allKeys.length} (coverage asserted per key)`)
 
 const settingsKeys = [
   'promptBorder',
@@ -200,12 +203,16 @@ const cases = [
 // ratio is assertable here — the host renders whatever the user's terminal
 // palette defines. Its settings keys are still covered by the per-theme
 // key-coverage assertions above.
+// Hosts >= 0.10.1 resolve built themes to canonical keys, so the era's
+// `claude` case reads `accent` there; pre-refactor hosts keep `claude`.
+const semanticKeys = 'accent' in built['pink-night']
 for (const [theme, key, background, minimum] of cases) {
-  const foregroundRgb = parseColor(built[theme][key])
+  const probeKey = semanticKeys && key === 'claude' ? 'accent' : key
+  const foregroundRgb = parseColor(built[theme][probeKey])
   const backgroundRgb = parseColor(background)
-  assert.notEqual(foregroundRgb, undefined, `${theme}.${key} must be parseable`)
+  assert.notEqual(foregroundRgb, undefined, `${theme}.${probeKey} must be parseable`)
   const ratio = contrast(foregroundRgb, backgroundRgb)
-  assert.ok(ratio >= minimum, `${theme}.${key} contrast ${ratio.toFixed(2)} >= ${minimum}`)
+  assert.ok(ratio >= minimum, `${theme}.${probeKey} contrast ${ratio.toFixed(2)} >= ${minimum}`)
 }
 
 console.log(`OK host theme validation: ${Object.keys(built).length} themes, ${allKeys.length - 1} keys each, settings colors covered`)

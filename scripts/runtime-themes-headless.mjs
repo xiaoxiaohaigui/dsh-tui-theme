@@ -37,36 +37,69 @@ const pluginHost = await import(pathToFileURL(join(adapter, 'plugin-host.js')).h
 const extensions = await import(pathToFileURL(join(adapter, 'extensions.js')).href)
 const themesModule = await import(pathToFileURL(join(adapter, 'themes.js')).href)
 const themeModule = await import(pathToFileURL(join(adapter, '..', 'theme.js')).href)
-const testUtils = await import(pathToFileURL(join(adapter, '..', 'test-utils.js')).href)
+// dsh-TUI >= 0.10.1 dropped test-utils.js from the npm package; fall back to a
+// manual plugin mount (same shape as headless-order-test.mjs). The admitted
+// path stays first so release-ledger bookkeeping stays asserted where the
+// admission helpers exist.
+const testUtils = existsSync(join(adapter, '..', 'test-utils.js'))
+  ? await import(pathToFileURL(join(adapter, '..', 'test-utils.js')).href)
+  : undefined
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+const mountPlugin = async app => {
+  if (testUtils === undefined) {
+    return { context: app, fiber: app.fiber, manual: true }
+  }
+  const manifest = testUtils.testManifest({ id: SETTINGS_NAMESPACE })
+  const admitted = await testUtils.mountAdmitted(app, SETTINGS_NAMESPACE, manifest)
+  return { context: admitted.context, fiber: admitted.fiber, manual: false }
+}
 const pink = await import(pathToFileURL(join(pluginRoot, 'lib', 'types', 'index.js')).href)
 const { SETTINGS_NAMESPACE } = await import(pathToFileURL(join(pluginRoot, 'scripts', 'expected-settings-contract.mjs')).href)
 
 const app = new Context()
 await app.plugin(pluginHost.default ?? pluginHost)
-const manifest = testUtils.testManifest({ id: SETTINGS_NAMESPACE })
-const admitted = await testUtils.mountAdmitted(app, SETTINGS_NAMESPACE, manifest)
-await admitted.context.plugin(pink)
+const mount = await mountPlugin(app)
+if (mount.manual) console.log('* mountAdmitted unavailable on this host; using manual plugin mount')
+await mount.context.plugin(pink)
 await app.plugin(extensions.default ?? extensions)
 
 const host = themesModule.getHostThemes(app.get('tuiThemes'))
 assert.ok(host, 'runtime theme host must be mounted')
 const deadline = Date.now() + 5_000
 while (host.getSnapshot().length !== 3 && Date.now() < deadline) {
-  await testUtils.sleep(25)
+  await sleep(25)
 }
 const snapshot = host.getSnapshot()
 assert.deepEqual(snapshot.map(entry => entry.name).sort(), ['pink-ansi', 'pink-day', 'pink-night'])
 
+// dsh-TUI >= 0.10.1 semantic-rename sentinel: the host normalizes legacy keys
+// at admission (aliases map to canonical names, retired keys are dropped),
+// while pre-0.10.1 hosts snapshot the descriptor colors verbatim.
+const semanticKeys = 'accent' in themeModule.getTheme('dark')
 for (const entry of snapshot) {
   const expected = JSON.parse(readFileSync(join(pluginRoot, 'themes', `${entry.name}.json`), 'utf8'))
   assert.equal(entry.displayName, expected.displayName)
   assert.equal(entry.base, expected.base)
-  assert.deepEqual(entry.colors, expected.colors)
-  assert.deepEqual(host.resolve(entry.name), { ...themeModule.getTheme(entry.base), ...expected.colors })
-  assert.equal(themeModule.getTheme(entry.name).claude, expected.colors.claude)
+  if (semanticKeys) {
+    assert.equal(entry.colors.accent, expected.colors.claude)
+    assert.equal(entry.colors.accentShimmer, expected.colors.claudeShimmer)
+    assert.equal(entry.colors.activity, expected.colors.claudeBlue_FOR_SYSTEM_SPINNER)
+    assert.equal(entry.colors.activityShimmer, expected.colors.claudeBlueShimmer_FOR_SYSTEM_SPINNER)
+    assert.equal(entry.colors.mascotBody, expected.colors.clawd_body)
+    assert.equal(entry.colors.inputBackground, expected.colors.clawd_background)
+    assert.equal(entry.colors.userPromptLabel, expected.colors.briefLabelYou)
+    assert.equal(entry.colors.text, expected.colors.text)
+    assert.equal('rainbow_red' in entry.colors, false, 'retired keys are dropped at admission')
+    assert.equal(host.resolve(entry.name).accent, expected.colors.claude)
+    assert.equal(themeModule.getTheme(entry.name).accent, expected.colors.claude)
+  } else {
+    assert.deepEqual(entry.colors, expected.colors)
+    assert.deepEqual(host.resolve(entry.name), { ...themeModule.getTheme(entry.base), ...expected.colors })
+    assert.equal(themeModule.getTheme(entry.name).claude, expected.colors.claude)
+  }
 }
 assert.equal(existsSync(staticThemes), false, 'runtime registration must not create static theme files')
-await testUtils.sleep(1_700)
+await sleep(1_700)
 assert.equal(existsSync(staticThemes), false, 'runtime confirmation must leave no static fallback files')
 
 const ledgerPath = join(dataDir, 'effect-ledger.jsonl')
@@ -74,11 +107,13 @@ const readLedger = () => (existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf
 const themeCreates = readLedger().filter(entry => entry.resource?.kind === 'theme' && entry.operation === 'create')
 assert.deepEqual(themeCreates.map(entry => entry.resource.id).sort(), ['pink-ansi', 'pink-day', 'pink-night'])
 
-await admitted.fiber.dispose()
-await testUtils.sleep(50)
+await mount.fiber.dispose()
+await sleep(50)
 assert.deepEqual(host.getSnapshot(), [], 'disposing the admitted plugin must release runtime themes')
-const themeReleases = readLedger().filter(entry => entry.resource?.kind === 'theme' && entry.operation === 'release')
-assert.deepEqual(themeReleases.map(entry => entry.resource.id).sort(), ['pink-ansi', 'pink-day', 'pink-night'])
+if (!mount.manual) {
+  const themeReleases = readLedger().filter(entry => entry.resource?.kind === 'theme' && entry.operation === 'release')
+  assert.deepEqual(themeReleases.map(entry => entry.resource.id).sort(), ['pink-ansi', 'pink-day', 'pink-night'])
+}
 assert.deepEqual(themeModule.getTheme('pink-night'), themeModule.getTheme('dark'), 'disposed runtime theme no longer resolves')
 console.log('OK runtime themes: 3 registered, no static files, ledger create/release, disposal clean')
 
@@ -106,22 +141,22 @@ for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
 const deliveries = []
 const app2 = new Context()
 await app2.plugin(pluginHost.default ?? pluginHost)
-const admitted2 = await testUtils.mountAdmitted(app2, SETTINGS_NAMESPACE, manifest)
-await admitted2.context.plugin(pink)
+const mount2 = await mountPlugin(app2)
+await mount2.context.plugin(pink)
 await app2.plugin(extensions.default ?? extensions)
 toastModule.getHostToastStore(app2.get('tuiToast'))?.setSink(delivery => deliveries.push(delivery))
 
 const toastDeadline = Date.now() + 8_000
 while (deliveries.length === 0 && Date.now() < toastDeadline) {
-  await testUtils.sleep(25)
+  await sleep(25)
 }
 assert.ok(deliveries.length >= 1, 'the shadow-hint toast must reach the host sink (retry included)')
 assert.equal(deliveries[0].color, undefined, 'the shadow hint is neutral')
 for (const file of ['pink-night.json', 'pink-day.json', 'pink-ansi.json']) {
   assert.ok(deliveries[0].text.includes(file), `hint must name ${file}`)
 }
-await admitted2.fiber.dispose()
-await testUtils.sleep(50)
+await mount2.fiber.dispose()
+await sleep(50)
 console.log('OK toast: shadow hint delivered through the real tuiToast seam')
 
 // ── Phase 3: apply-time toasts reach the sink through the seam-late retry ───
@@ -157,15 +192,15 @@ const fakeSettings = {
 const deliveries3 = []
 const app3 = new Context()
 await app3.plugin(pluginHost.default ?? pluginHost)
-const admitted3 = await testUtils.mountAdmitted(app3, SETTINGS_NAMESPACE, manifest)
+const mount3 = await mountPlugin(app3)
 app3.provide('settings', fakeSettings)
-await admitted3.context.plugin(pink)
+await mount3.context.plugin(pink)
 await app3.plugin(extensions.default ?? extensions)
 toastModule.getHostToastStore(app3.get('tuiToast'))?.setSink(delivery => deliveries3.push(delivery))
 
 const applyToastDeadline = Date.now() + 8_000
 while (deliveries3.length < 2 && Date.now() < applyToastDeadline) {
-  await testUtils.sleep(25)
+  await sleep(25)
 }
 const healToast = deliveries3.find(delivery => delivery.text.includes('已修复'))
 assert.ok(healToast, 'the self-heal warning fired during apply must reach the host sink')
@@ -176,5 +211,5 @@ assert.ok(followToast, 'the boot-follow result fired at settings time must reach
 assert.equal(followToast.color, 'success', 'the boot-follow toast is a success')
 assert.ok(followToast.text.includes('pink-day') && followToast.text.includes('reload'), 'the follow toast names the new theme and the reload hint')
 assert.equal(JSON.parse(readFileSync(join(dataDir3, 'theme.json'), 'utf8')).theme, 'pink-day', 'the follow pref write still happened')
-await admitted3.fiber.dispose()
+await mount3.fiber.dispose()
 console.log('OK toast phase 3: apply-time self-heal and boot-follow toasts delivered on the real host')
