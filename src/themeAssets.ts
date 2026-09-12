@@ -25,6 +25,10 @@ export interface ThemeInstallResult {
   readonly repaired: readonly string[]
   /** Files that could not be installed (per-file failures). */
   readonly failed: readonly string[]
+  /** Set only when the bundled directory itself was unreadable, so nothing
+   *  was attempted and no per-file entry exists. Carries the directory and
+   *  the underlying error for the caller's log. */
+  readonly sourceError?: string
 }
 
 export interface BundledTheme {
@@ -36,7 +40,10 @@ export interface BundledTheme {
 }
 
 // Same resolution order as the host's utils/paths.ts homeDir(): os.homedir()
-// first, USERPROFILE/HOME spellings as stripped-down fallbacks.
+// first, USERPROFILE/HOME spellings as stripped-down fallbacks. When all three
+// come up empty the returned '' makes every derived path resolve against the
+// process cwd — the host's own semantics, kept deliberately identical rather
+// than second-guessed here.
 export function homeDir(): string {
   return homedir() || process.env.USERPROFILE || process.env.HOME || ''
 }
@@ -113,8 +120,10 @@ export function installBundledThemes(
   let files: string[]
   try {
     files = readdirSync(sourceDir).filter(entry => entry.toLowerCase().endsWith('.json'))
-  } catch {
-    return { installed, skipped, repaired, failed: [sourceDir] }
+  } catch (error) {
+    // No file was attempted, so `failed` stays empty; the directory-level
+    // reason travels separately so the caller can log a precise line.
+    return { installed, skipped, repaired, failed, sourceError: `could not read bundled themes from ${sourceDir}: ${String(error)}` }
   }
   for (const file of files) {
     const target = join(targetDir, file)

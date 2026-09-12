@@ -19,6 +19,10 @@ export interface ThemeInstallResult {
     readonly repaired: readonly string[];
     /** Files that could not be installed (per-file failures). */
     readonly failed: readonly string[];
+    /** Set only when the bundled directory itself was unreadable, so nothing
+     *  was attempted and no per-file entry exists. Carries the directory and
+     *  the underlying error for the caller's log. */
+    readonly sourceError?: string;
 }
 export interface BundledTheme {
     readonly file: string;

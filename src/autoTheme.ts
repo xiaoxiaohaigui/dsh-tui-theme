@@ -21,6 +21,9 @@ const DARK_THEME = 'pink-night'
 
 interface FollowCache {
   light: boolean
+  /** Diagnostic only (the /settings panel shows its date); never an expiry
+   *  signal — the cache is applied as-is whenever the user opts in, and this
+   *  plugin has no producer to refresh it (see the module header). */
   at: number
 }
 

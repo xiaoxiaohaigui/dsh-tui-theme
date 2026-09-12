@@ -109,6 +109,9 @@ export function apply(ctx: Context, config: Config = {}): void {
     if (runtimeConfirmed) return
     if (!cordis.autoInstallThemes) return
     const result = installBundledThemes()
+    if (result.sourceError !== undefined) {
+      ctx.logger.warn(`${PLUGIN_ID}: ${result.sourceError}`)
+    }
     for (const file of result.installed) {
       ctx.logger.info(`${PLUGIN_ID}: installed bundled theme "${file}" into ~/.dsh-tui/themes/`)
     }

@@ -105,6 +105,13 @@ assert.deepEqual(
 // guarantee, so the count is reported instead of pinned to a hardcoded floor.
 console.log(`* host Theme key count: ${allKeys.length} (coverage asserted per key)`)
 
+// The color keys the host's /settings screen paints with (screens/Settings.tsx
+// at the pinned baseline: promptBorder card frame, permission card title,
+// selectionBg focused row, suggestion/error/success/inactive/subtle row text
+// and checkbox chips, warning badges). Maintained by hand because the screen
+// has no exported key manifest; revisit this list whenever a dsh-TUI release
+// adds a Theme key to that screen — the per-key coverage assertion below then
+// fails loudly instead of shipping an unreadable settings card.
 const settingsKeys = [
   'promptBorder',
   'selectionBg',

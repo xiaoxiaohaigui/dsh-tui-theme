@@ -149,8 +149,7 @@ function activeThemeName(dataDir: string): string | undefined {
   return prefCache.value
 }
 
-function isPinkThemeActive(dataDir: string): boolean {
-  const name = activeThemeName(dataDir)
+function isPinkTheme(name: string | undefined): name is string {
   return name !== undefined && PINK_THEMES.has(name)
 }
 
@@ -198,12 +197,11 @@ function readPalette(name: string): StatusColors {
   return NO_COLORS
 }
 
-function paletteFor(dataDir: string): StatusColors {
-  const name = activeThemeName(dataDir)
-  if (name === undefined || !PINK_THEMES.has(name)) return NO_COLORS
+function paletteFor(themeName: string | undefined): StatusColors {
+  if (!isPinkTheme(themeName)) return NO_COLORS
   const now = Date.now()
-  if (colorsCache === undefined || colorsCache.name !== name || now - colorsCache.at >= THEME_PREF_TTL_MS) {
-    colorsCache = { at: now, name, colors: readPalette(name) }
+  if (colorsCache === undefined || colorsCache.name !== themeName || now - colorsCache.at >= THEME_PREF_TTL_MS) {
+    colorsCache = { at: now, name: themeName, colors: readPalette(themeName) }
   }
   return colorsCache.colors
 }
@@ -253,7 +251,8 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
     // differ in how the result reaches the host.
     const renderScalar = (): void => {
       const eff = getEffective()
-      const cells = statusCells(eff)
+      const themeName = activeThemeName(dataDir)
+      const cells = statusCells(eff, themeName)
       const separator = sanitizeOrnament(eff.statusSeparator, SEPARATOR)
       const parts = [cells.glyph, cells.clock, cells.turns].filter(
         (value): value is string => value !== undefined,
@@ -272,14 +271,18 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
       try {
         if (store !== undefined) {
           const eff = getEffective()
-          const cells = statusCells(eff)
+          // One pref read per render, shared by the visibility check and the
+          // palette: the module header's "one cheap stat" invariant holds on
+          // both paths (statusCells and paletteFor each used to re-resolve).
+          const themeName = activeThemeName(dataDir)
+          const cells = statusCells(eff, themeName)
           store.push({
             visible: cells.glyph !== undefined || cells.clock !== undefined || cells.turns !== undefined,
             glyph: cells.glyph,
             clock: cells.clock,
             turns: cells.turns,
             separator: sanitizeOrnament(eff.statusSeparator, SEPARATOR),
-            colors: paletteFor(dataDir),
+            colors: paletteFor(themeName),
           })
           return
         }
@@ -290,13 +293,17 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
     }
 
     /** The three optional cells (all undefined = the line is off: master
-     *  switch, theme scope, and the toggles fold into this one shape). */
-    function statusCells(eff: EffectiveStatus): {
+     *  switch, theme scope, and the toggles fold into this one shape).
+     *  Takes the theme name resolved once by the caller per render. */
+    function statusCells(
+      eff: EffectiveStatus,
+      themeName: string | undefined,
+    ): {
       glyph: string | undefined
       clock: string | undefined
       turns: string | undefined
     } {
-      const enabled = eff.statusEnabled && (eff.statusScope === 'all-themes' || isPinkThemeActive(dataDir))
+      const enabled = eff.statusEnabled && (eff.statusScope === 'all-themes' || isPinkTheme(themeName))
       if (!enabled) return { glyph: undefined, clock: undefined, turns: undefined }
       return {
         glyph: eff.showGlyph ? sanitizeOrnament(eff.statusGlyph, GLYPH) : undefined,

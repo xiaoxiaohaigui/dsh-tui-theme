@@ -650,6 +650,31 @@ const emit = (record, event, ...args) => {
   console.log('✓ follow logging: baseline docs stay quiet, real toggles still log')
 }
 
+// ── 12c. unreadable bundled source: the directory-level failure stays precise ──
+{
+  const targetDir = join(sandboxHome, 'source-fail-target')
+  const sourceDir = join(pluginRoot, 'themes')
+  const originalReaddir = builtinFs.readdirSync
+  try {
+    builtinFs.readdirSync = (path, ...rest) => {
+      if (String(path) === sourceDir) throw new Error('EACCES: source unreadable')
+      return originalReaddir(path, ...rest)
+    }
+    syncBuiltinESMExports()
+    const result = installBundledThemes(targetDir, sourceDir)
+    assert.deepEqual(result.failed, [], 'no per-file failure exists when nothing was attempted')
+    assert.match(
+      result.sourceError ?? '',
+      /could not read bundled themes from .*themes.*EACCES/,
+      'the directory-level error names the source and the cause',
+    )
+  } finally {
+    builtinFs.readdirSync = originalReaddir
+    syncBuiltinESMExports()
+  }
+  console.log('✓ unreadable bundled source: precise sourceError, no bogus per-file failure')
+}
+
 // ── 12. status injection: session handlers die with tuiStatus activation ────
 {
   const outerHandlers = new Map()

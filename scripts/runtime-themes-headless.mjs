@@ -240,3 +240,78 @@ assert.ok(followToast.text.includes('pink-day') && followToast.text.includes('re
 assert.equal(JSON.parse(readFileSync(join(dataDir3, 'theme.json'), 'utf8')).theme, 'pink-day', 'the follow pref write still happened')
 await mount3.fiber.dispose()
 console.log('OK toast phase 3: apply-time self-heal and boot-follow toasts delivered on the real host')
+
+// ── Phase 4: settings namespace registers against the REAL service, late ────
+// The stub suites cover the namespace registration with fakes, and phase 3
+// stands in a minimal fake at apply time; this phase mounts a real
+// @deepseek-ai/dsh-settings SettingsProvider AFTER the plugin (and after the
+// extensions row), so the plugin's parked ['settings'] inject fires against
+// the genuine register()/scope/watch machinery. The end-to-end signal: a
+// user-layer followSystem write through the real service flips theme.json.
+const sandbox4 = mkdtempSync(join(tmpdir(), 'pink-settings-late-'))
+process.env.USERPROFILE = sandbox4
+process.env.HOME = sandbox4
+const dataDir4 = join(sandbox4, '.dsh-tui')
+mkdirSync(dataDir4, { recursive: true })
+writeFileSync(join(dataDir4, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }, null, 2))
+
+const { SettingsProvider } = await import(pathToFileURL(hostRequire.resolve('@deepseek-ai/dsh-settings')).href)
+
+/** Minimal concrete provider: in-memory storage, no file, no background IO. */
+class MemorySettingsProvider extends SettingsProvider {
+  static provide = 'settings'
+  writable = true
+  stored = {}
+  async load() {
+    return { ...this.stored }
+  }
+
+  async persist(ns, section) {
+    this.stored[ns] = { ...section }
+  }
+}
+
+const app4 = new Context()
+await app4.plugin(pluginHost.default ?? pluginHost)
+const mount4 = await mountPlugin(app4)
+await mount4.context.plugin(pink)
+await app4.plugin(extensions.default ?? extensions)
+// Deliberately last: the namespace registration can only be "late" when the
+// service arrives after everything the plugin injects at apply time.
+await app4.plugin(MemorySettingsProvider)
+
+const provider = app4.get('settings')
+assert.ok(provider, 'the real dsh-settings provider must be mounted')
+const settingsDeadline = Date.now() + 5_000
+while (provider.get(SETTINGS_NAMESPACE) === undefined && Date.now() < settingsDeadline) {
+  await sleep(25)
+}
+assert.ok(
+  provider.get(SETTINGS_NAMESPACE),
+  `the plugin namespace must register with the real service within ${5_000}ms of its late arrival`,
+)
+await provider.update(SETTINGS_NAMESPACE, { followSystem: true })
+assert.equal(
+  provider.get(SETTINGS_NAMESPACE)?.followSystem,
+  true,
+  'the real service must resolve the committed user layer for the namespace',
+)
+
+const prefPath4 = join(dataDir4, 'theme.json')
+const followDeadline = Date.now() + 5_000
+let followed = false
+while (!followed && Date.now() < followDeadline) {
+  try {
+    followed = JSON.parse(readFileSync(prefPath4, 'utf8')).theme === 'pink-day'
+  } catch {
+    // Pref not written yet.
+  }
+  if (!followed) await sleep(25)
+}
+assert.equal(
+  followed,
+  true,
+  'the user-layer follow toggle must apply the cached light background through the real service',
+)
+await mount4.fiber.dispose()
+console.log('OK settings: namespace registers late on the real dsh-settings service and drives the follow pref')
