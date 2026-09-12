@@ -1082,14 +1082,14 @@ const emit = (record, event, ...args) => {
   assert.equal(element.children[0].children[0], '✿')
   assert.equal(element.children[1].props.color, '#77646D', 'the separator uses the subtle key')
   assert.match(element.children[2].children[0], /^\d{2}:\d{2}$/)
-  assert.equal(element.children[2].props.color, '#A8929C', 'the clock uses the inactive tier, not body text')
+  assert.equal(element.children[2].props.color, '#C4B0B9', 'the clock uses the bottom-bar inactiveShimmer key')
 
   // Turn boundaries push through the store and land in the next render.
   const session = { id: 'r1' }
   emit(record, 'session/event', session, { type: 'turn/end' })
   const withTurns = renderComponent()
   assert.equal(withTurns.children.at(-1).children[0], '1✦')
-  assert.equal(withTurns.children.at(-1).props.color, '#A8929C')
+  assert.equal(withTurns.children.at(-1).props.color, '#C4B0B9')
 
   // A /theme switch (the host rewrites the pref) lands at the very next
   // render: rewrite the pref to pink-day and the palette moves with it,
@@ -1098,7 +1098,7 @@ const emit = (record, event, ...args) => {
   emit(record, 'session/event', session, { type: 'turn/end' })
   const dayView = renderComponent()
   assert.equal(dayView.children[0].props.color, 'rgb(222,110,150)', 'the glyph follows the new palette')
-  assert.equal(dayView.children[2].props.color, '#9A8790', 'the clock follows the new palette immediately')
+  assert.equal(dayView.children[2].props.color, '#9E6E82', 'the clock follows the new palette immediately')
 
   // Toggles fold into the snapshot: all off renders nothing (no scalar
   // fallback either — the rich view just shows nothing).
