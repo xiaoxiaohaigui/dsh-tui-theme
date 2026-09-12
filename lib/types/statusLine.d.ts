@@ -14,17 +14,19 @@
  *
  * The line belongs to the pink palettes: by default it only renders while a
  * pink theme is active (checked per render with the host's own theme
- * precedence, so a mid-session /theme switch takes effect within the pref
- * cache TTL — at most one clock tick); `statusScope: 'all-themes'` opts it
- * into every other theme too (uncolored there — non-pink palettes are not
- * readable from a plugin).
+ * precedence, so a mid-session /theme switch takes effect at the very next
+ * render — the pref file's mtime is re-checked per render; the TTL below is
+ * only the fallback for filesystems where mtime granularity can hide a
+ * rewrite); `statusScope: 'all-themes'` opts it into every other theme too
+ * (uncolored there — non-pink palettes are not readable from a plugin).
  *
  * Cost discipline: `session/event` is a token-level firehose (assistant/chunk
  * et al.), but the rendered content only changes at turn boundaries and on
  * the clock, so pushes/renders run on turn/start, turn/end, session/disposed,
  * and the 15s tick — never per streamed chunk. The persisted-pref read behind
  * the theme check and the palette read behind the colors are each cached for
- * the same tick length so a render is pure string building.
+ * the same tick length so a render is pure string building plus one cheap
+ * stat of the pref file.
  * @module dsh-tui-theme/statusLine
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -51,8 +53,9 @@ export type EffectiveStatus = Required<StatusOptions>;
 /**
  * @internal Drop the persisted-pref and palette caches (verify.mjs only; not
  * part of the plugin's behavioral contract). Production invalidation is the
- * TTL. Both caches share the reset so test scenarios cannot couple through
- * the 15s palette TTL the way they could through the pref one.
+ * mtime gate, with the TTL as the fallback. Both caches share the reset so
+ * test scenarios cannot couple through the 15s palette TTL the way they
+ * could through the pref one.
  */
 export declare function invalidateThemePrefCacheForTests(): void;
 /**

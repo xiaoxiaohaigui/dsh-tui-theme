@@ -923,8 +923,9 @@ const emit = (record, event, ...args) => {
     assert.equal(statusCalls.length, baselineCalls, 'firehose events render nothing')
     assert.equal(prefReads, 0, 'firehose events never read the theme pref')
 
-    // A turn boundary renders — served by the warm pref cache (no disk hit
-    // within the TTL), so even boundary renders stay off the filesystem.
+    // A turn boundary renders — the mtime gate costs one stat (not counted
+    // here), and the warm cache answers without a read, so even boundary
+    // renders stay off the read path.
     emit(record, 'session/event', session, { type: 'turn/end' })
     assert.equal(statusCalls.length, baselineCalls + 1, 'a turn boundary renders')
     assert.equal(prefReads, 0, 'the warm cache serves the boundary render')
@@ -936,18 +937,28 @@ const emit = (record, event, ...args) => {
     assert.match(statusCalls.at(-1)[1], /0✦$/)
     assert.equal(prefReads, 0)
 
-    // Inside the TTL a pref rewrite is not yet visible and costs no read…
+    // A pref rewrite (the host's /theme switch) is seen at the very next
+    // render: the stat notices the moved mtime and pays exactly one re-read,
+    // and the non-pink pref hides the line — no waiting out the TTL (the
+    // stale window used to show as wrong rich-view colors).
     writeFileSync(themePrefPath, JSON.stringify({ theme: 'dark' }, null, 2))
     emit(record, 'session/event', nextSession, { type: 'turn/end' })
     assert.equal(statusCalls.length, baselineCalls + 3)
-    assert.match(statusCalls.at(-1)[1], /1✦$/, 'the cached pink pref keeps the line visible')
-    assert.equal(prefReads, 0, 'the TTL serves the stale-but-pink answer without I/O')
+    assert.equal(statusCalls.at(-1)[1], undefined, 'the pref rewrite is seen at the next render')
+    assert.equal(prefReads, 1, 'the moved mtime costs exactly one re-read')
 
-    // …after invalidation (TTL expiry in production) the next render re-reads.
+    // An unchanged pref keeps the cache warm: the render reruns, but the
+    // hidden line's text is unchanged so set() is deduplicated away, and
+    // no read happens.
+    emit(record, 'session/event', nextSession, { type: 'turn/end' })
+    assert.equal(statusCalls.length, baselineCalls + 3, 'an unchanged line does not rewrite the store')
+    assert.equal(prefReads, 1, 'the unchanged mtime serves the cache')
+
+    // Test-only invalidation (the TTL-expiry stand-in) re-reads too.
     invalidateThemePrefCacheForTests()
     emit(record, 'session/event', nextSession, { type: 'turn/end' })
-    assert.equal(prefReads, 1, 'invalidation re-reads the pref exactly once')
-    assert.equal(statusCalls.at(-1)[1], undefined, 'the non-pink pref hides the line')
+    assert.equal(prefReads, 2, 'invalidation re-reads the pref exactly once')
+    assert.equal(statusCalls.at(-1)[1], undefined, 'the non-pink pref keeps the line hidden')
   } finally {
     builtinFs.readFileSync = originalRead
     syncBuiltinESMExports()
@@ -1071,14 +1082,23 @@ const emit = (record, event, ...args) => {
   assert.equal(element.children[0].children[0], '✿')
   assert.equal(element.children[1].props.color, '#77646D', 'the separator uses the subtle key')
   assert.match(element.children[2].children[0], /^\d{2}:\d{2}$/)
-  assert.equal(element.children[2].props.color, '#F0E4E9', 'the clock uses the text key')
+  assert.equal(element.children[2].props.color, '#A8929C', 'the clock uses the inactive tier, not body text')
 
   // Turn boundaries push through the store and land in the next render.
   const session = { id: 'r1' }
   emit(record, 'session/event', session, { type: 'turn/end' })
   const withTurns = renderComponent()
   assert.equal(withTurns.children.at(-1).children[0], '1✦')
-  assert.equal(withTurns.children.at(-1).props.color, '#F0E4E9')
+  assert.equal(withTurns.children.at(-1).props.color, '#A8929C')
+
+  // A /theme switch (the host rewrites the pref) lands at the very next
+  // render: rewrite the pref to pink-day and the palette moves with it,
+  // without any TTL wait.
+  writeFileSync(themePrefPath, JSON.stringify({ theme: 'pink-day' }, null, 2))
+  emit(record, 'session/event', session, { type: 'turn/end' })
+  const dayView = renderComponent()
+  assert.equal(dayView.children[0].props.color, 'rgb(222,110,150)', 'the glyph follows the new palette')
+  assert.equal(dayView.children[2].props.color, '#9A8790', 'the clock follows the new palette immediately')
 
   // Toggles fold into the snapshot: all off renders nothing (no scalar
   // fallback either — the rich view just shows nothing).
