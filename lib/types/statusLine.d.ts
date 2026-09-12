@@ -49,8 +49,10 @@ export interface StatusOptions {
 /** Fully-resolved status knobs. */
 export type EffectiveStatus = Required<StatusOptions>;
 /**
- * @internal Drop the persisted-pref cache (verify.mjs only; not part of the
- * plugin's behavioral contract). Production invalidation is the TTL.
+ * @internal Drop the persisted-pref and palette caches (verify.mjs only; not
+ * part of the plugin's behavioral contract). Production invalidation is the
+ * TTL. Both caches share the reset so test scenarios cannot couple through
+ * the 15s palette TTL the way they could through the pref one.
  */
 export declare function invalidateThemePrefCacheForTests(): void;
 /**

@@ -140,12 +140,15 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs
 const fakeStatus = calls => ({ set(key, text) { calls.push([key, text]); return () => {} } })
 /**
  * A 0.10.1+ status service: registerView present. `refuse` simulates the
- * host rejecting the registration (returns undefined, warning invisible).
+ * host rejecting the registration (returns undefined, warning invisible);
+ * `throws` simulates a hostile service whose registration throws — the
+ * plugin must warn and fall back, never propagate.
  */
-const fakeRichStatus = (calls, viewCalls, { refuse = false } = {}) => ({
+const fakeRichStatus = (calls, viewCalls, { refuse = false, throws = false } = {}) => ({
   set(key, text) { calls.push([key, text]); return () => {} },
   registerView(descriptor, identity) {
     viewCalls.push([descriptor, identity])
+    if (throws) throw new Error('status view registry unavailable')
     if (refuse) return undefined
     return () => {}
   },
@@ -1114,6 +1117,29 @@ const emit = (record, event, ...args) => {
   assert.equal(viewCalls.length, 1, 'the registration was attempted')
   assert.equal(statusCalls.length > 0, true, 'a refused registration (undefined) falls back to set()')
   console.log('✓ refused rich registration: the scalar path keeps the line alive')
+}
+
+// ── 17b. hostile rich registration throws: warn, fall back, never propagate ─
+{
+  const statusCalls = []
+  const viewCalls = []
+  const { ctx, record } = makeStubCtx({ status: fakeRichStatus(statusCalls, viewCalls, { throws: true }) })
+  // applyAndSettle resolving at all is the non-propagation half of the
+  // invariant: a synchronous throw escaping the inject callback would land here.
+  await applyAndSettle(ctx)
+  assert.equal(viewCalls.length, 1, 'the registration was attempted')
+  assert.equal(statusCalls.length > 0, true, 'a throwing registration falls back to set()')
+  assert.equal(
+    record.warnings.some(msg => msg.includes('rich status view registration failed')),
+    true,
+    'the failure is warned, never propagated',
+  )
+  assert.equal(
+    (record.handlers.get('session/event') ?? []).length >= 1,
+    true,
+    'the session wiring survived the throw',
+  )
+  console.log('✓ hostile rich registration: warn + scalar fallback, session wiring intact')
 }
 
 // ── 18. shadow cleanup dialog: one confirm, byte-checked deletion ───────────

@@ -193,6 +193,14 @@ const cases = [
   // (#DE6E96), so the large-text floor here is 2.5 instead of 3.0. Body-text
   // readability stays guarded by the 4.5 `text` case above.
   ['pink-day', 'claude', '#F6F3ED', 2.5],
+  // The DEEPSEEK pixel word's gradient end (claudeBlue_FOR_SYSTEM_SPINNER,
+  // 0.10.1 `activity`) was lightened one notch with the same sakura-day
+  // family move (#DE6E96 -> #E879A0), so the gradient reads as a fade. The
+  // measured 2.47 is accepted for this decorative gradient end and guarded
+  // here at 2.4 — the floor exists to catch further lightening, not to
+  // re-litigate the accepted 0.03 gap below the 2.5 large-text floor.
+  // Decision record: docs/decisions/2026-09-12-pink-day-claude-family-lightening.md
+  ['pink-day', 'claudeBlue_FOR_SYSTEM_SPINNER', '#F6F3ED', 2.4],
   ['pink-day', 'inactive', '#F6F3ED', 2.5],
   ['pink-day', 'success', '#F6F3ED', 3.0],
   ['pink-day', 'success', '#F3D7E0', 2.5],
@@ -203,11 +211,12 @@ const cases = [
 // ratio is assertable here — the host renders whatever the user's terminal
 // palette defines. Its settings keys are still covered by the per-theme
 // key-coverage assertions above.
-// Hosts >= 0.10.1 resolve built themes to canonical keys, so the era's
-// `claude` case reads `accent` there; pre-refactor hosts keep `claude`.
+// Hosts >= 0.10.1 resolve built themes to canonical keys, so era keys read
+// their canonical names there; pre-refactor hosts keep the era keys.
 const semanticKeys = 'accent' in built['pink-night']
+const semanticAliases = { claude: 'accent', claudeBlue_FOR_SYSTEM_SPINNER: 'activity' }
 for (const [theme, key, background, minimum] of cases) {
-  const probeKey = semanticKeys && key === 'claude' ? 'accent' : key
+  const probeKey = (semanticKeys && semanticAliases[key]) || key
   const foregroundRgb = parseColor(built[theme][probeKey])
   const backgroundRgb = parseColor(background)
   assert.notEqual(foregroundRgb, undefined, `${theme}.${probeKey} must be parseable`)
