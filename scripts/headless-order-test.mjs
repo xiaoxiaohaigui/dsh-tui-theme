@@ -102,30 +102,35 @@ const collectBinds = () => {
         .filter(entry => entry.resource?.id === STATUS_CONTRIBUTION_KEY)
     : []
 }
+// The plugin renders its contribution through the rich view path on hosts
+// with tuiStatus.registerView (0.10.1+) and through the scalar set() path on
+// older ones — the key is the same, only the store half differs.
 const readState = () => {
   const runtime = app.get('tuiStatus')
   const settingsRuntime = app.get('tuiSettingsSections')
   const settingsHost = settingsSectionsModule.getHostSettingsSections(settingsRuntime)
+  const store = statusModule.getHostStatusStore(runtime)
   return {
     pinkBinds: collectBinds(),
-    snapshot: statusModule.getHostStatusStore(runtime)?.getSnapshot(),
+    snapshot: store?.getSnapshot(),
+    viewSnapshot: typeof store?.getViewSnapshot === 'function' ? store.getViewSnapshot() : [],
     settingsSection: settingsHost?.list().find(section => section.ns === SETTINGS_NAMESPACE),
   }
 }
 
 let state = readState()
 const deadline = Date.now() + READY_TIMEOUT_MS
-while (
-  (state.pinkBinds.length === 0 ||
-    !state.snapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY) ||
-    state.settingsSection === undefined) &&
-  Date.now() < deadline
-) {
+const contributionVisible = s =>
+  s.pinkBinds.length > 0 &&
+  (s.snapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY) === true ||
+    s.viewSnapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY) === true) &&
+  s.settingsSection !== undefined
+while (!contributionVisible(state) && Date.now() < deadline) {
   await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS))
   state = readState()
 }
 
-const { pinkBinds, snapshot, settingsSection } = state
+const { pinkBinds, snapshot, viewSnapshot, settingsSection } = state
 assert.equal(
   STATUS_CONTRIBUTION_KEY,
   SETTINGS_NAMESPACE,
@@ -133,7 +138,8 @@ assert.equal(
 )
 assert.ok(pinkBinds.length > 0, `plugin must bind through the late status service within ${READY_TIMEOUT_MS}ms`)
 assert.ok(
-  snapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY),
+  snapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY) ||
+    viewSnapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY),
   `status store must contain the plugin contribution within ${READY_TIMEOUT_MS}ms`,
 )
 assert.ok(
@@ -141,4 +147,21 @@ assert.ok(
   `plugin must register its /settings section through the late settings service within ${READY_TIMEOUT_MS}ms`,
 )
 assertSettingsContract(assert, settingsSection)
-console.log(`OK headless order: ${pinkBinds.length} ledger bind(s), status contribution, settings section`)
+if (typeof statusModule.getHostStatusStore(app.get('tuiStatus'))?.getViewSnapshot === 'function') {
+  const view = viewSnapshot.find(entry => entry.key === STATUS_CONTRIBUTION_KEY)
+  assert.ok(view, 'a registerView-capable host must carry the contribution as a rich view')
+  assert.equal(view.maxRows, 1, 'the rich status view requests exactly one row')
+  assert.equal(typeof view.component, 'function', 'the rich status view carries a component')
+  assert.equal(
+    snapshot.some(entry => entry.key === STATUS_CONTRIBUTION_KEY),
+    false,
+    'the two render paths are mutually exclusive: the rich path contributes no scalar text',
+  )
+  console.log('OK headless order: rich view registered (maxRows 1), ledger bind, settings section')
+} else {
+  assert.ok(
+    snapshot?.some?.(entry => entry.key === STATUS_CONTRIBUTION_KEY),
+    'a set()-only host must carry the contribution as scalar text',
+  )
+  console.log(`OK headless order: ${pinkBinds.length} ledger bind(s), status contribution, settings section`)
+}

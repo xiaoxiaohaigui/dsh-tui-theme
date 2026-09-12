@@ -10,6 +10,8 @@
         autoInstallThemes: true
         statusEnabled: true
         followSystem: false
+        statusGlyph: '✿'
+        statusSeparator: '·'
         showGlyph: true
         showClock: true
         showTurns: true

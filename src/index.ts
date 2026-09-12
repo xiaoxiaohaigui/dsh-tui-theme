@@ -22,6 +22,7 @@ import { startRuntimeThemes } from './runtimeThemes.js'
 import { startStatusLine, type EffectiveStatus, type StatusScope } from './statusLine.js'
 import { runFollowSystem } from './autoTheme.js'
 import { registerPinkSettings, type PinkSettingsDoc } from './settingsSection.js'
+import { startShadowCleanup } from './shadowCleanup.js'
 import { startToastRelay } from './toast.js'
 import { PLUGIN_ID } from './pluginId.js'
 
@@ -42,6 +43,8 @@ export const Config: Schemastery<Config> = z.object({
   autoInstallThemes: z.boolean().default(true),
   statusEnabled: z.boolean().default(true),
   followSystem: z.boolean().default(false),
+  statusGlyph: z.string().default('✿'),
+  statusSeparator: z.string().default('·'),
   showGlyph: z.boolean().default(true),
   showClock: z.boolean().default(true),
   showTurns: z.boolean().default(true),
@@ -58,6 +61,8 @@ const DEFAULTS: EffectiveConfig = {
   autoInstallThemes: true,
   statusEnabled: true,
   followSystem: false,
+  statusGlyph: '✿',
+  statusSeparator: '·',
   showGlyph: true,
   showClock: true,
   showTurns: true,
@@ -76,6 +81,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     autoInstallThemes: config.autoInstallThemes ?? DEFAULTS.autoInstallThemes,
     statusEnabled: config.statusEnabled ?? DEFAULTS.statusEnabled,
     followSystem: config.followSystem ?? DEFAULTS.followSystem,
+    statusGlyph: config.statusGlyph ?? DEFAULTS.statusGlyph,
+    statusSeparator: config.statusSeparator ?? DEFAULTS.statusSeparator,
     showGlyph: config.showGlyph ?? DEFAULTS.showGlyph,
     showClock: config.showClock ?? DEFAULTS.showClock,
     showTurns: config.showTurns ?? DEFAULTS.showTurns,
@@ -86,6 +93,11 @@ export function apply(ctx: Context, config: Config = {}): void {
   // logger is invisible to a TUI user). Hosts without the 0.10 toast seam
   // degrade to the log-only behavior of previous releases.
   const sendToast = startToastRelay(ctx)
+  // One-shot guided cleanup for byte-identical legacy theme files that shadow
+  // the runtime registry; a host-managed confirm dialog (tuiDialogs), never
+  // raw input interception. Hosts without the seam keep the toast-only
+  // behavior of previous releases.
+  const offerShadowCleanup = startShadowCleanup(ctx, sendToast)
 
   // New hosts own the palette in memory. Install synchronously first so an old
   // host can resolve a persisted theme during its first render. If a runtime
@@ -131,12 +143,14 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
     // Same-named static files win over runtime registrations. User-edited
     // files stay unmentioned; files byte-identical to the bundled copy add
-    // nothing but permanently block palette updates, so point them out once.
+    // nothing but permanently block palette updates, so point them out once
+    // and offer the guided cleanup.
     if (!firstConfirmation) return
     const shadowed = findShadowedBundledThemes()
     if (shadowed.length > 0) {
       ctx.logger.info(`${PLUGIN_ID}: legacy static files shadow the runtime registry: ${shadowed.join(', ')}`)
       sendToast(`✿ ${shadowed.join('、')} 与插件内置相同，删除后配色将随插件自动更新`)
+      offerShadowCleanup(shadowed)
     }
   }
   let runtimePresent = false
@@ -213,7 +227,7 @@ export function apply(ctx: Context, config: Config = {}): void {
         ctx.logger.info(`${PLUGIN_ID}: follow: disabled, manual /theme choice preserved`)
       }
     }
-  })
+  }, dataDir)
   // The follow decision is owned entirely by the /settings layer above: there
   // is no timer or fallback path on hosts without a settings service — the
   // plugin keeps the user's existing theme choice and degrades to static

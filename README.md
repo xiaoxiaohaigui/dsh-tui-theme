@@ -6,11 +6,12 @@
 | --- | --- | --- |
 | **三套粉色主题** | 主题运行时（dsh-TUI ≥ 0.10.0）/ 静态资产（旧宿主） | `pink-night` 夜樱 / `pink-day` 昼樱 / `pink-ansi` 樱·ANSI；新宿主优先即时注册，服务晚到时短暂回退并清理本次文件，旧宿主使用 `~/.dsh-tui/themes/` |
 | **缓存背景跟随** | 设置 + 本地缓存 | 可选地应用已有 `theme-follow.json` 的昼樱/夜樱结果；不直接读取终端输入或发送 OSC 查询 |
-| **花符状态行** | `tuiStatus` | 输入框上方一行小装饰：✿ · 时钟 · 实时轮数（默认仅粉主题下显示） |
-| **设置面板** | `tuiSettingsSections` | `/settings` 里一个可编辑区块，改完即时生效 |
+| **花符状态行** | `tuiStatus` | 输入框上方一行小装饰：✿ · 时钟 · 实时轮数（默认仅粉主题下显示）；dsh-TUI ≥ 0.10.1 经富状态视图按主题配色渲染，旧宿主为无色标量行 |
+| **设置面板** | `tuiSettingsSections` | `/settings` 里一个可编辑区块（背景跟随 / 状态行两组子页），改完即时生效 |
 | **屏幕提示** | `tuiToast`（dsh-TUI ≥ 0.10.0） | 背景跟随结果、主题文件自愈、旧文件遮蔽提醒各弹一行短提示；旧宿主自动静默降级 |
+| **旧文件清理** | `tuiDialogs`（dsh-TUI ≥ 0.9.3） | 检测到遮蔽旧主题文件时，额外提供一次性宿主确认对话框，确认后清理逐字节相同的副本；拒绝/忽略则不做任何改动 |
 
-**明确不做的事**：不注册快捷键、不注册/修改任何命令、不拦截输入、不追加会话事件、不注入 system prompt。卸载即无痕（可选删除主题文件）。
+**明确不做的事**：不注册快捷键、不注册/修改任何命令、不拦截输入、不追加会话事件、不注入 system prompt（`tuiDialogs` 是宿主托管的中性确认面板：宿主自渲染、宿主拥有键盘，插件只提交请求，不属于输入拦截）。卸载即无痕（可选删除主题文件）。
 
 ## 主题预览
 
@@ -62,7 +63,7 @@ dsh-TUI ≥ 0.10.0 上，跟随结果会以 toast 短提示呈现：真正改写
 | 主题文件损坏被自动修复 | ✿ 已修复损坏的主题文件：…（警告色） |
 | 旧版遗留的同名主题文件与内置版本完全相同 | ✿ … 与插件内置相同，删除后配色将随插件自动更新 |
 
-最后一条只针对与内置副本逐字节相同的文件——你手动调过色的文件永远不会被提及或删除。
+最后一条只针对与内置副本逐字节相同的文件——你手动调过色的文件永远不会被提及或删除。遮蔽场景还会在支持该接缝的宿主上（dsh-TUI ≥ 0.9.3）提供一次性确认对话框：确认后插件按同样的逐字节校验清理副本并以 toast 反馈结果，拒绝/忽略则一切维持现状。
 
 ## 安装
 
@@ -88,7 +89,7 @@ dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
 
 在 dsh-TUI ≥ 0.10.0 中，三套主题通过 `ctx.tuiThemes` 运行时注册：调色板随插件即时生效，正常挂载时不写入用户目录，主题选择器显示中文 `displayName`。若服务晚到，插件会先同步回退到静态路径，并在确认运行时服务后删除本次写入且仍未被改写的文件。旧宿主使用静态文件路径：插件只在主题文件缺失时复制，绝不覆盖你编辑过的 `~/.dsh-tui/themes/pink-*.json`。唯一的例外是已损坏的目标文件（无法解析为 JSON，例如安装中途中断留下的残文件）：插件会把它改名为 `<文件名>.corrupt-<时间戳>` 保留现场，再重新安装内置副本，记录一条警告，并在支持 toast 的宿主上弹一条屏幕提示。
 
-从旧宿主升级后，若希望改用运行时托管，请先备份并删除 `~/.dsh-tui/themes/pink-{night,day,ansi}.json`；插件不会自动删除用户文件。遗留文件若与内置副本完全相同，插件会在运行时托管确认时弹一条一次性提醒，指出哪些文件正在遮蔽配色更新。
+从旧宿主升级后，若希望改用运行时托管，请先备份并删除 `~/.dsh-tui/themes/pink-{night,day,ansi}.json`；插件不会自动删除用户文件。遗留文件若与内置副本完全相同，插件会在运行时托管确认时弹一条一次性提醒，并额外提供一次性确认对话框（宿主 `tuiDialogs` 面板）：确认删除则清理这些遮蔽副本，拒绝或忽略则不做任何改动；你手动调过色的文件永远不会被提及或删除。
 
 旧宿主重启 dsh-TUI 后插件会把三套主题复制进 `~/.dsh-tui/themes/`（**仅缺失时复制，绝不覆盖你已有的同名文件**）；0.10.0 及更新宿主则直接使用运行时注册，然后：
 
@@ -102,14 +103,16 @@ dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
 
 配置有三层，优先级：`/settings` 用户层 > `cordis.yml` 配置层 > 内置默认值。
 
-`/settings` 里找到 **pink-theme** 区块即可编辑：
+`/settings` 里找到 **pink-theme** 区块即可编辑（分「背景跟随」「状态行」两组子页）：
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `followSystem` | `false` | 启动时应用上次保存的终端背景结果（昼樱 ↔ 夜樱）；插件不刷新缓存 |
-| `showGlyph` | `true` | 花符：开 = ✿ 开头，关 = 不显示 |
+| `followSystem` | `false` | 启动时应用上次保存的终端背景结果（昼樱 ↔ 夜樱）；插件不刷新缓存。开启时该字段会直接显示缓存状态，如 `on（缓存: light · 2026-09-12）` 或 `on（无缓存，启动时不动）` |
+| `showGlyph` | `true` | 花符开关：开 = 以花符开头，关 = 不显示 |
+| `statusGlyph` | `✿` | 花符字符（文本字段）：1–2 个显示单元、不接受控制字符，留空恢复默认 |
 | `showClock` | `true` | 显示 HH:MM 时钟 |
 | `showTurns` | `true` | 显示当前会话轮数（`N✦`，自本次启动起计） |
+| `statusSeparator` | `·` | 各段之间的分隔符（文本字段）：同花符字符的校验规则 |
 | `statusScope` | `pink-only` | 状态行展示：`pink-only` 仅樱花粉主题 / `all-themes` 所有主题 |
 
 三项装饰全关时状态行整体消失。另有仅 profile 层的开关（`cordis.patch.yml`，不出现在 /settings）：`autoInstallThemes`、`statusEnabled`。
@@ -123,7 +126,7 @@ dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
 | 输入框 ❯ 提示符 | 默认态无颜色参数（终端默认前景色，模型工作时变暗）；最高推理档充能动画用**写死的蓝色 ramp**（深色端 `#82B9FF` / 浅色端 `#1E5FEB`） | `EffortChargeGlyph.tsx`、`trajectory/effortIgnition.ts` |
 | 底栏上下文进度条分段色 | system / prompt / assistant / thinking / tools 五段为**写死的藏青→品牌蓝系**（`#22305F`→`#5A7CFF`），永远不随主题变化 | `screens/StatusMetrics.ts` |
 | 进度条空余段配色 | 宿主按 `themeName === 'light'` **字符串比较**取浅色配色——自定义浅色主题（如 pink-day）不等于 `'light'`，会拿到深色空余段，在浅色终端上偏深 | `screens/StatusLine.tsx` |
-| 状态行文字颜色 | 标量状态行（`tuiStatus.set`）由宿主统一以**无色 + 终端 dim** 渲染，插件无法指定颜色（✿ 行因此继承终端默认前景色）；dsh-TUI ≥ 0.10.1 另提供 `tuiStatus.registerView` 有界富状态视图（≤3 行、宿主主题化渲染、pointer-only、被拒返回 undefined），可突破该限制，插件暂未采用 | `screens/Chat.tsx`、`dsh-adapter/status.ts` |
+| 状态行文字颜色 | 旧路径标量状态行（`tuiStatus.set`）由宿主统一以**无色 + 终端 dim** 渲染；dsh-TUI ≥ 0.10.1 插件已改用 `tuiStatus.registerView` 富状态视图按主题配色渲染（✿ 品牌色 / 正文 text 色 / 分隔符 subtle 色，颜色取自生效主题文件，pink-ansi 为具名 ANSI 值），旧宿主自动回退标量路径（无色 + dim） | `screens/Chat.tsx`、`dsh-adapter/status.ts` |
 | 输入框块状光标 | 宿主挂载期间隐藏终端原生光标（`?25l`），输入框光标由应用以**反色字符**自绘（`<Text inverse>`），颜色即主题 text/background 的反色——OSC 12 光标色只能染到不可见的原生光标，插件无法给输入光标上色（辅助功能模式 `CLAUDE_CODE_ACCESSIBILITY=1` 下原生光标才可见） | `ink/components/App.tsx`、`components/PromptInput.tsx` |
 | 正文链接 | OSC 8 超链接默认**写死的 ANSI 蓝**（`chalk.blue`）；注释说明 wrap-ansi 无法跨 OSC 8 保留主题 RGB 色，故链接色不读主题键 | `cc/hyperlink.ts` |
 | 顶栏像素鲸鱼颜色 | 四色调色板（描边/身体/腹部/嘴）**写死**且模块加载时预渲染，不读取任何主题键——任何主题都无法改变鲸鱼配色 | `components/Whale.tsx` |
@@ -162,5 +165,5 @@ npm run verify:host
 
 ## 兼容性
 
-- **dsh-TUI 版本下限：0.8.8**（状态行与设置面板；0.9.3 实测）。0.10.0 及更新版本使用运行时主题注册；更旧的宿主缺 `dsh-tui-extensions` 扩展面时，插件自动降级为“仅安装三套主题”，不报错。
+- **dsh-TUI 版本下限：0.8.8**（状态行与设置面板；0.9.3 实测）。0.10.0 及更新版本使用运行时主题注册；0.10.1 起状态行经富状态视图按主题配色（更旧宿主自动回退无色标量行）；更旧的宿主缺 `dsh-tui-extensions` 扩展面时，插件自动降级为“仅安装三套主题”，不报错。
 - Node `^22.19 || >=24`，纯 ESM，MIT。

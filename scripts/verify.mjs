@@ -64,12 +64,14 @@ const applyAndSettle = async (ctx, config) => {
 }
 
 /** A stub Cordis-like context; every seam optional and recorded. */
-function makeStubCtx({ status, sections, settingsService, themes, toast, deferThemes = false, deferToast = false } = {}) {
+function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs, deferThemes = false, deferToast = false, deferDialogs = false } = {}) {
   const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], themeRegisters: [], warnings: [], infos: [] }
   let availableThemes = themes
   let availableToast = toast
+  let availableDialogs = dialogs
   const deferredThemeCallbacks = []
   const deferredToastCallbacks = []
+  const deferredDialogsCallbacks = []
   const logger = { info: msg => record.infos.push(String(msg)), warn: msg => record.warnings.push(String(msg)), error: () => {} }
   const base = {
     logger,
@@ -78,6 +80,7 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, deferTh
       if (serviceName === 'tuiSettingsSections') return sections
       if (serviceName === 'tuiThemes') return availableThemes
       if (serviceName === 'tuiToast') return availableToast
+      if (serviceName === 'tuiDialogs') return availableDialogs
       return undefined
     },
     on(event, handler) {
@@ -99,6 +102,7 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, deferTh
         tuiSettingsSections: sections,
         tuiThemes: availableThemes,
         tuiToast: availableToast,
+        tuiDialogs: availableDialogs,
       }
       if (deferThemes && availableThemes === undefined && deps.includes('tuiThemes')) {
         deferredThemeCallbacks.push(callback)
@@ -106,6 +110,10 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, deferTh
       }
       if (deferToast && availableToast === undefined && deps.includes('tuiToast')) {
         deferredToastCallbacks.push(callback)
+        return
+      }
+      if (deferDialogs && availableDialogs === undefined && deps.includes('tuiDialogs')) {
+        deferredDialogsCallbacks.push(callback)
         return
       }
       if (deps.every(dep => services[dep] !== undefined)) {
@@ -122,10 +130,26 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, deferTh
     availableToast = service
     for (const callback of deferredToastCallbacks.splice(0)) callback({ ...base, tuiToast: service })
   }
+  record.activateDialogs = service => {
+    availableDialogs = service
+    for (const callback of deferredDialogsCallbacks.splice(0)) callback({ ...base, tuiDialogs: service })
+  }
   return { ctx: base, record }
 }
 
 const fakeStatus = calls => ({ set(key, text) { calls.push([key, text]); return () => {} } })
+/**
+ * A 0.10.1+ status service: registerView present. `refuse` simulates the
+ * host rejecting the registration (returns undefined, warning invisible).
+ */
+const fakeRichStatus = (calls, viewCalls, { refuse = false } = {}) => ({
+  set(key, text) { calls.push([key, text]); return () => {} },
+  registerView(descriptor, identity) {
+    viewCalls.push([descriptor, identity])
+    if (refuse) return undefined
+    return () => {}
+  },
+})
 const fakeSections = calls => ({ register(section) { calls.push(section); return () => {} } })
 const fakeThemes = (record, { throws = false } = {}) => ({
   register(descriptor, identity) {
@@ -155,6 +179,18 @@ const fakeToast = (deliveries, { dropFirst = 0 } = {}) => {
     },
   }
 }
+/**
+ * A tuiDialogs stub: records confirm requests, answers them from the test
+ * via the returned queue (each entry resolves one dialog).
+ */
+const fakeDialogs = (requests, answers) => ({
+  confirm(owner, request) {
+    requests.push({ owner, request })
+    return new Promise(resolve => {
+      answers.push(resolve)
+    })
+  },
+})
 
 const emit = (record, event, ...args) => {
   for (const handler of record.handlers.get(event) ?? []) handler(...args)
@@ -915,6 +951,267 @@ const emit = (record, event, ...args) => {
     invalidateThemePrefCacheForTests()
   }
   console.log('✓ hot path: firehose events render nothing and never read the pref; boundaries use the cache')
+}
+
+// ── 15. settings panel UX: groups, ornament drafts, follow format ───────────
+{
+  const dataDir = join(sandboxHome, '.dsh-tui')
+  rmSync(dataDir, { recursive: true, force: true })
+  mkdirSync(dataDir, { recursive: true })
+  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+  invalidateThemePrefCacheForTests()
+  const statusCalls = []
+  const sectionsCalls = []
+  const settingsRecord = { registerCalls: [], watchers: [] }
+  const { ctx, record } = makeStubCtx({
+    status: fakeStatus(statusCalls),
+    sections: fakeSections(sectionsCalls),
+    settingsService: fakeSettingsService(settingsRecord, {}),
+  })
+  await applyAndSettle(ctx)
+  const section = sectionsCalls[0]
+  const fieldByPath = path =>
+    section.fields.find(field => JSON.stringify(field.path) === JSON.stringify(path))
+
+  // Navigation groups: two subpages, every field assigned.
+  assert.deepEqual(
+    section.groups.map(group => group.id).sort(),
+    ['follow', 'status-line'],
+  )
+  assert.equal(fieldByPath(['followSystem']).group, 'follow')
+  for (const path of [['showGlyph'], ['statusGlyph'], ['showClock'], ['showTurns'], ['statusSeparator'], ['statusScope']]) {
+    assert.equal(fieldByPath(path).group, 'status-line')
+  }
+
+  // Ornament draft gate: 1–2 display cells, control chars refused, empty
+  // resets to the built-in default, unset displays the effective value.
+  const glyph = fieldByPath(['statusGlyph'])
+  assert.equal(glyph.kind, 'text')
+  assert.deepEqual(glyph.parse(''), { kind: 'clear' })
+  assert.deepEqual(glyph.parse('❀'), { kind: 'set', value: '❀' })
+  assert.deepEqual(glyph.parse('樱'), { kind: 'set', value: '樱' }, 'a 2-cell CJK char is allowed')
+  assert.equal(glyph.parse('abc'), undefined, '3 cells are rejected')
+  assert.equal(glyph.parse('a\u0007b'), undefined, 'control characters are rejected')
+  assert.deepEqual(glyph.parse(' \u00A0 '), { kind: 'clear' }, 'whitespace-only drafts reset to the default')
+  assert.equal(glyph.format(undefined), '✿', 'unset shows the effective default')
+  assert.equal(glyph.format('❀'), '❀')
+  const separator = fieldByPath(['statusSeparator'])
+  assert.equal(separator.kind, 'text')
+  assert.deepEqual(separator.parse('✦'), { kind: 'set', value: '✦' })
+  assert.equal(separator.format(undefined), '·')
+
+  // followSystem format surfaces the cached follow state the startup would
+  // consult — the "toggled on, nothing happened" reason, on the surface.
+  const follow = fieldByPath(['followSystem'])
+  assert.equal(follow.format(undefined), 'off', 'the cordis layer default is off')
+  assert.equal(follow.format(false), 'off')
+  assert.equal(follow.format(true), 'on（无缓存，启动时不动）')
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: Date.UTC(2026, 8, 12) }))
+  assert.match(follow.format(true), /^on（缓存: light · \d{4}-\d{2}-\d{2}）$/)
+  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: false }))
+  assert.equal(follow.format(true), 'on（缓存: dark）', 'a cache without a timestamp omits the date')
+
+  // A committed ornament edit lands live on the scalar line.
+  for (const watcher of settingsRecord.watchers) {
+    watcher({ statusGlyph: '❀', statusSeparator: '~' })
+  }
+  emit(record, 'session/event', { id: 'u1' }, { type: 'turn/end' })
+  assert.match(statusCalls.at(-1)[1], /^❀ ~ \d{2}:\d{2} ~ 1✦$/)
+
+  // Hand-edited config layers bypass the draft gate; the render side
+  // sanitizes anyway (control chars stripped, capped at 2 cells).
+  for (const watcher of settingsRecord.watchers) {
+    watcher({ statusGlyph: 'x\u0007yz', statusSeparator: '~' })
+  }
+  emit(record, 'session/event', { id: 'u1' }, { type: 'turn/end' })
+  assert.match(statusCalls.at(-1)[1], /^xy ~ /, 'control chars stripped and the rest capped at 2 cells')
+  console.log('✓ settings panel: two groups, ornament drafts gated, follow format shows the cache state')
+}
+
+// ── 16. rich status view: themed one-row view on registerView-capable hosts ─
+{
+  const themePrefPath = join(sandboxHome, '.dsh-tui', 'theme.json')
+  writeFileSync(themePrefPath, JSON.stringify({ theme: 'pink-night' }, null, 2))
+  invalidateThemePrefCacheForTests()
+  const statusCalls = []
+  const viewCalls = []
+  const settingsRecord = { registerCalls: [], watchers: [] }
+  const { ctx, record } = makeStubCtx({
+    status: fakeRichStatus(statusCalls, viewCalls),
+    sections: fakeSections([]),
+    settingsService: fakeSettingsService(settingsRecord, {}),
+  })
+  await applyAndSettle(ctx)
+
+  assert.equal(viewCalls.length, 1, 'the rich view is registered exactly once')
+  assert.equal(statusCalls.length, 0, 'the rich path never writes scalar text')
+  const [descriptor, identity] = viewCalls[0]
+  assert.equal(descriptor.key, 'dsh-tui-theme', 'the rich view keeps the shared contribution key')
+  assert.equal(descriptor.maxRows, 1)
+  assert.equal(typeof descriptor.component, 'function')
+  assert.equal(identity?.tuiStatus !== undefined, true, 'identity is the inject-scoped context')
+
+  // Render the component against a minimal fake of the host kit: the element
+  // tree must map the snapshot to themed Text cells.
+  const renderComponent = () =>
+    descriptor.component({
+      React: {
+        createElement: (type, props, ...children) => ({ type, props, children: children.length === 1 && Array.isArray(children[0]) ? children[0] : children }),
+        useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+      },
+      ui: { Box: 'box', Text: 'text' },
+    })
+  const element = renderComponent()
+  assert.equal(element.type, 'box', 'one row Box')
+  assert.equal(element.children[0].type, 'text')
+  assert.equal(element.children[0].props.color, 'rgb(242,123,166)', 'the glyph uses the brand key of the active palette')
+  assert.equal(element.children[0].children[0], '✿')
+  assert.equal(element.children[1].props.color, '#77646D', 'the separator uses the subtle key')
+  assert.match(element.children[2].children[0], /^\d{2}:\d{2}$/)
+  assert.equal(element.children[2].props.color, '#F0E4E9', 'the clock uses the text key')
+
+  // Turn boundaries push through the store and land in the next render.
+  const session = { id: 'r1' }
+  emit(record, 'session/event', session, { type: 'turn/end' })
+  const withTurns = renderComponent()
+  assert.equal(withTurns.children.at(-1).children[0], '1✦')
+  assert.equal(withTurns.children.at(-1).props.color, '#F0E4E9')
+
+  // Toggles fold into the snapshot: all off renders nothing (no scalar
+  // fallback either — the rich view just shows nothing).
+  for (const watcher of settingsRecord.watchers) {
+    watcher({ showGlyph: false, showClock: false, showTurns: false })
+  }
+  emit(record, 'session/event', session, { type: 'turn/end' })
+  assert.equal(renderComponent(), null, 'all toggles off render nothing')
+
+  // Master switch off: registered but never visible.
+  const quietCalls = []
+  const quietViews = []
+  const quietCtx = makeStubCtx({ status: fakeRichStatus(quietCalls, quietViews) })
+  await applyAndSettle(quietCtx.ctx, { statusEnabled: false })
+  assert.equal(quietViews.length, 1, 'the view is still registered')
+  assert.equal(
+    quietViews[0][0].component({
+      React: {
+        createElement: (type, props, ...children) => ({ type, props, children: children.length === 1 && Array.isArray(children[0]) ? children[0] : children }),
+        useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+      },
+      ui: { Box: 'box', Text: 'text' },
+    }),
+    null,
+    'statusEnabled=false renders nothing',
+  )
+  console.log('✓ rich status view: themed cells from the palette, mutual exclusion from set()')
+}
+
+// ── 17. refused rich registration falls back to the scalar path ─────────────
+{
+  const statusCalls = []
+  const viewCalls = []
+  const { ctx } = makeStubCtx({ status: fakeRichStatus(statusCalls, viewCalls, { refuse: true }) })
+  await applyAndSettle(ctx)
+  assert.equal(viewCalls.length, 1, 'the registration was attempted')
+  assert.equal(statusCalls.length > 0, true, 'a refused registration (undefined) falls back to set()')
+  console.log('✓ refused rich registration: the scalar path keeps the line alive')
+}
+
+// ── 18. shadow cleanup dialog: one confirm, byte-checked deletion ───────────
+{
+  const seedShadow = () => {
+    rmSync(sandboxThemes, { recursive: true, force: true })
+    mkdirSync(sandboxThemes, { recursive: true })
+    for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
+      writeFileSync(join(sandboxThemes, `${theme}.json`), readFileSync(join(pluginRoot, 'themes', `${theme}.json`), 'utf8'))
+    }
+  }
+
+  // 18a. Dialog answered with "delete": the byte-identical copies are
+  // removed and the result is toasted.
+  seedShadow()
+  const requests = []
+  const answers = []
+  const cleanDeliveries = []
+  const cleanContext = makeStubCtx({
+    deferThemes: true,
+    toast: fakeToast(cleanDeliveries),
+    dialogs: fakeDialogs(requests, answers),
+  })
+  apply(cleanContext.ctx)
+  cleanContext.record.activateThemes(fakeThemes(cleanContext.record))
+  await settle()
+  assert.equal(requests.length, 1, 'exactly one confirm dialog is offered')
+  assert.equal(requests[0].owner?.tuiDialogs !== undefined, true, 'the owner is the inject-scoped context')
+  for (const file of ['pink-night.json', 'pink-day.json', 'pink-ansi.json']) {
+    assert.ok(requests[0].request.message.includes(file), `the dialog names ${file}`)
+  }
+  assert.ok(requests[0].request.title.includes('旧主题文件'))
+  answers[0](true)
+  await settle()
+  assert.equal(existsSync(join(sandboxThemes, 'pink-night.json')), false, 'confirmation removes the shadowing copy')
+  assert.equal(existsSync(join(sandboxThemes, 'pink-day.json')), false, 'confirmation removes the shadowing copy')
+  assert.equal(existsSync(join(sandboxThemes, 'pink-ansi.json')), false, 'confirmation removes the shadowing copy')
+  const cleanToast = cleanDeliveries.find(delivery => delivery[0].includes('已清理'))
+  assert.ok(cleanToast, 'the cleanup result is toasted')
+  assert.equal(cleanToast[1], 'success')
+
+  // 18b. Declining keeps the previous behavior exactly: files stay, no
+  // cleanup toast.
+  seedShadow()
+  const declineRequests = []
+  const declineAnswers = []
+  const declineDeliveries = []
+  const declineContext = makeStubCtx({
+    deferThemes: true,
+    toast: fakeToast(declineDeliveries),
+    dialogs: fakeDialogs(declineRequests, declineAnswers),
+  })
+  apply(declineContext.ctx)
+  declineContext.record.activateThemes(fakeThemes(declineContext.record))
+  await settle()
+  assert.equal(declineRequests.length, 1, 'the dialog is offered again for the new activation')
+  declineAnswers[0](false)
+  await settle()
+  assert.equal(existsSync(join(sandboxThemes, 'pink-night.json')), true, 'declining keeps the file')
+  assert.equal(
+    declineDeliveries.some(delivery => delivery[0].includes('已清理')),
+    false,
+    'no cleanup toast without a confirmation',
+  )
+
+  // 18c. The dialogs seam arriving late still asks exactly once; a file the
+  // user edited between detection and confirmation is never deleted.
+  seedShadow()
+  writeFileSync(join(sandboxThemes, 'pink-day.json'), '{ "name": "pink-day", "colors": { "text": "#123456" } }')
+  const lateRequests = []
+  const lateAnswers = []
+  const lateContext = makeStubCtx({ deferThemes: true, deferDialogs: true, toast: fakeToast([]) })
+  apply(lateContext.ctx)
+  lateContext.record.activateThemes(fakeThemes(lateContext.record))
+  await settle()
+  assert.equal(lateRequests.length, 0, 'no dialog before the seam arrives')
+  lateContext.record.activateDialogs(fakeDialogs(lateRequests, lateAnswers))
+  await settle()
+  assert.equal(lateRequests.length, 1, 'the parked offer fires when the seam arrives')
+  lateAnswers[0](true)
+  await settle()
+  assert.equal(existsSync(join(sandboxThemes, 'pink-night.json')), false, 'the still-identical file is removed')
+  assert.equal(existsSync(join(sandboxThemes, 'pink-day.json')), true, 'the edited file survives the byte check')
+  assert.equal(existsSync(join(sandboxThemes, 'pink-ansi.json')), false)
+
+  // 18d. A hostile dialogs service must not take the activation down.
+  seedShadow()
+  const hostileContext = makeStubCtx({
+    deferThemes: true,
+    dialogs: { confirm() { throw new Error('dialog machinery broken') } },
+  })
+  apply(hostileContext.ctx)
+  hostileContext.record.activateThemes(fakeThemes(hostileContext.record))
+  await settle()
+  assert.equal(existsSync(join(sandboxThemes, 'pink-night.json')), true, 'a failed dialog deletes nothing')
+
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  console.log('✓ shadow cleanup dialog: offered once, byte-checked deletion, decline/late/hostile all safe')
 }
 
 console.log('\nAll plugin verifications passed.')

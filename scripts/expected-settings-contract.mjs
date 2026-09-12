@@ -25,13 +25,18 @@ export const SETTINGS_FIELDS = [
   [['showClock'], 'boolean'],
   [['showTurns'], 'boolean'],
   [['statusScope'], 'select'],
+  [['statusGlyph'], 'text'],
+  [['statusSeparator'], 'text'],
 ]
 
 /** The values the statusScope select must expose, looked up by field path. */
 export const STATUS_SCOPE_FIELD_PATH = ['statusScope']
 export const STATUS_SCOPE_OPTIONS = ['pink-only', 'all-themes']
 
-/** Assert a section object (ns + fields) matches the contract. */
+/** Navigation group ids; every field must name one of them. */
+export const SETTINGS_GROUPS = ['follow', 'status-line']
+
+/** Assert a section object (ns + groups + fields) matches the contract. */
 export function assertSettingsContract(assert, section) {
   assert.equal(section.ns, SETTINGS_NAMESPACE, 'settings namespace must match')
   const actual = section.fields.map(field => [field.path, field.kind])
@@ -50,4 +55,19 @@ export function assertSettingsContract(assert, section) {
     STATUS_SCOPE_OPTIONS,
     'status scope must expose both supported select values',
   )
+  assert.deepEqual(
+    (section.groups ?? []).map(group => group.id).sort(),
+    [...SETTINGS_GROUPS].sort(),
+    'settings groups must remain compatible with the declared navigation',
+  )
+  for (const field of section.fields) {
+    assert.equal(
+      typeof field.group, 'string',
+      `field ${JSON.stringify(field.path)} must declare its navigation group`,
+    )
+    assert.equal(
+      SETTINGS_GROUPS.includes(field.group), true,
+      `field ${JSON.stringify(field.path)} names an unknown group`,
+    )
+  }
 }

@@ -6,28 +6,46 @@
  * ever appended to the session log). The host owns rendering and
  * sanitization; text is scalars only.
  *
+ * Two render paths, chosen once per activation (no hot switching):
+ * - dsh-TUI >= 0.10.1 (`registerView` present): a themed one-row rich view
+ *   (see statusView.ts) whose colors come from the active pink palette;
+ * - older hosts: the historical scalar `set()` line, which the host renders
+ *   uncolored + terminal dim.
+ *
  * The line belongs to the pink palettes: by default it only renders while a
  * pink theme is active (checked per render with the host's own theme
  * precedence, so a mid-session /theme switch takes effect within the pref
  * cache TTL — at most one clock tick); `statusScope: 'all-themes'` opts it
- * into every other theme too.
+ * into every other theme too (uncolored there — non-pink palettes are not
+ * readable from a plugin).
  *
  * Cost discipline: `session/event` is a token-level firehose (assistant/chunk
- * et al.), but the rendered text only changes at turn boundaries and on the
- * clock, so renders run on turn/start, turn/end, session/disposed, and the
- * 15s tick — never per streamed chunk. The persisted-pref read behind the
- * theme check is cached for the same tick length so a render is pure string
- * building.
+ * et al.), but the rendered content only changes at turn boundaries and on
+ * the clock, so pushes/renders run on turn/start, turn/end, session/disposed,
+ * and the 15s tick — never per streamed chunk. The persisted-pref read behind
+ * the theme check and the palette read behind the colors are each cached for
+ * the same tick length so a render is pure string building.
  * @module dsh-tui-theme/statusLine
  */
 
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only import for the side effect: dsh-session's ambient declarations
 // put the session/* events onto cordis's Events interface.
 import type {} from '@deepseek-ai/dsh-session'
-import { homeDir } from './themeAssets.js'
+import { bundledThemesDir, homeDir, themesTargetDir } from './themeAssets.js'
 import { readThemePref } from './autoTheme.js'
+import { sanitizeOrnament } from './ornament.js'
+import {
+  createStatusStore,
+  createStatusViewComponent,
+  statusViewDescriptor,
+  NO_COLORS,
+  type StatusColors,
+  type StatusStore,
+  type StatusSnapshot,
+} from './statusView.js'
 import { PLUGIN_ID } from './pluginId.js'
 
 /** Which themes the blossom line renders under. */
@@ -36,7 +54,11 @@ export type StatusScope = 'pink-only' | 'all-themes'
 export interface StatusOptions {
   /** Master switch (cordis-config layer only; not surfaced in /settings). */
   statusEnabled?: boolean
-  /** Lead the line with the ✿ glyph. */
+  /** The character leading the line (default ✿; 1–2 display cells). */
+  statusGlyph?: string
+  /** The character between the cells (default ·; 1–2 display cells). */
+  statusSeparator?: string
+  /** Lead the line with the blossom glyph. */
   showGlyph?: boolean
   /** Include the HH:MM clock. */
   showClock?: boolean
@@ -50,6 +72,7 @@ export interface StatusOptions {
 export type EffectiveStatus = Required<StatusOptions>
 
 const GLYPH = '✿'
+const SEPARATOR = '·'
 // The tuiStatus contribution key (same value as the settings namespace and
 // the cordis plugin name — one literal would be three drift risks).
 const STATUS_KEY = PLUGIN_ID
@@ -103,6 +126,54 @@ function isPinkThemeActive(dataDir: string): boolean {
   return name !== undefined && PINK_THEMES.has(name)
 }
 
+// ── palette colors ──────────────────────────────────────────────────────────
+// Read from the effective pink palette with the same one-tick cache as the
+// pref: a legacy ~/.dsh-tui/themes/<name>.json first (it shadows the runtime
+// registry on old hosts), then this package's bundled copy. Non-pink themes
+// render uncolored.
+
+let colorsCache: { at: number; name: string; colors: StatusColors } | undefined
+
+function paletteCell(colors: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = colors[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  return undefined
+}
+
+function readPalette(name: string): StatusColors {
+  // `accent` is the 0.10.1 canonical brand key; `claude` is the 0.9.x name
+  // the bundled JSONs still carry (the host aliases it at admission, but this
+  // read bypasses the host entirely).
+  for (const dir of [themesTargetDir(), bundledThemesDir()]) {
+    try {
+      const parsed = JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf8')) as {
+        colors?: Record<string, unknown>
+      }
+      if (parsed.colors === null || typeof parsed.colors !== 'object') continue
+      return {
+        glyph: paletteCell(parsed.colors, ['accent', 'claude']),
+        text: paletteCell(parsed.colors, ['text']),
+        separator: paletteCell(parsed.colors, ['subtle', 'inactive']),
+      }
+    } catch {
+      // Missing or unreadable source: try the next one.
+    }
+  }
+  return NO_COLORS
+}
+
+function paletteFor(dataDir: string): StatusColors {
+  const name = activeThemeName(dataDir)
+  if (name === undefined || !PINK_THEMES.has(name)) return NO_COLORS
+  const now = Date.now()
+  if (colorsCache === undefined || colorsCache.name !== name || now - colorsCache.at >= THEME_PREF_TTL_MS) {
+    colorsCache = { at: now, name, colors: readPalette(name) }
+  }
+  return colorsCache.colors
+}
+
 /** Structural view of the host service; the real type lives in the host. */
 interface TuiStatusLike {
   set(
@@ -110,6 +181,8 @@ interface TuiStatusLike {
     text: string | number | boolean | undefined,
     identity?: unknown,
   ): () => void
+  /** dsh-TUI >= 0.10.1; presence decides the render path for this activation. */
+  registerView?(descriptor: unknown, identity?: unknown): (() => void) | undefined
 }
 
 function clockText(): string {
@@ -138,34 +211,79 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
 
     const turns = new Map<object, number>()
     let current: object | undefined
-    let dispose: (() => void) | undefined
+    let legacyDispose: (() => void) | undefined
+    let viewDispose: (() => void) | undefined
+    let store: StatusStore | undefined
+
+    // The scalar path's render. Both paths compute the same cells; they only
+    // differ in how the result reaches the host.
+    const renderScalar = (): void => {
+      const eff = getEffective()
+      const cells = statusCells(eff)
+      const separator = sanitizeOrnament(eff.statusSeparator, SEPARATOR)
+      const parts = [cells.glyph, cells.clock, cells.turns].filter(
+        (value): value is string => value !== undefined,
+      )
+      const text = parts.join(` ${separator} `)
+      if (text === lastText) return
+      lastText = text
+      // The trailing identity must be the inject-scoped context (the same
+      // activation the traceable binds as caller) — the plugin's outer ctx
+      // is a different activation view and would be silently rejected.
+      legacyDispose = status.set(STATUS_KEY, text === '' ? undefined : text, statusCtx) ?? legacyDispose
+    }
     let lastText: string | undefined
 
     const render = (): void => {
       try {
-        const eff = getEffective()
-        const parts: string[] = []
-        // The line is pink garnish: off on other themes unless opted in.
-        // The theme check runs here (not once at startup) so a mid-session
-        // /theme switch lands within one pref-cache TTL — the next tick or
-        // turn boundary.
-        const themeAllows = eff.statusScope === 'all-themes' || isPinkThemeActive(dataDir)
-        if (eff.statusEnabled && themeAllows) {
-          if (eff.showGlyph) parts.push(GLYPH)
-          if (eff.showClock) parts.push(clockText())
-          if (eff.showTurns && current !== undefined) {
-            parts.push(`${turns.get(current) ?? 0}✦`)
-          }
+        if (store !== undefined) {
+          const eff = getEffective()
+          const cells = statusCells(eff)
+          store.push({
+            visible: cells.glyph !== undefined || cells.clock !== undefined || cells.turns !== undefined,
+            glyph: cells.glyph,
+            clock: cells.clock,
+            turns: cells.turns,
+            separator: sanitizeOrnament(eff.statusSeparator, SEPARATOR),
+            colors: paletteFor(dataDir),
+          })
+          return
         }
-        const text = parts.join(' · ')
-        if (text === lastText) return
-        lastText = text
-        // The trailing identity must be the inject-scoped context (the same
-        // activation the traceable binds as caller) — the plugin's outer ctx
-        // is a different activation view and would be silently rejected.
-        dispose = status.set(STATUS_KEY, text === '' ? undefined : text, statusCtx) ?? dispose
+        renderScalar()
       } catch {
         // Display garnish only: a rendering hiccup must never travel upward.
+      }
+    }
+
+    /** The three optional cells (all undefined = the line is off: master
+     *  switch, theme scope, and the toggles fold into this one shape). */
+    function statusCells(eff: EffectiveStatus): {
+      glyph: string | undefined
+      clock: string | undefined
+      turns: string | undefined
+    } {
+      const enabled = eff.statusEnabled && (eff.statusScope === 'all-themes' || isPinkThemeActive(dataDir))
+      if (!enabled) return { glyph: undefined, clock: undefined, turns: undefined }
+      return {
+        glyph: eff.showGlyph ? sanitizeOrnament(eff.statusGlyph, GLYPH) : undefined,
+        clock: eff.showClock ? clockText() : undefined,
+        turns: eff.showTurns && current !== undefined ? `${turns.get(current) ?? 0}✦` : undefined,
+      }
+    }
+
+    // Rich path probe: a soft capability check, exactly like every other
+    // seam. registerView is fixed for the host's lifetime, so the choice is
+    // made once per activation; a refused registration (returned undefined,
+    // warning invisible without a configured logger) falls back to set().
+    if (typeof status.registerView === 'function') {
+      const viewStore = createStatusStore()
+      const dispose = status.registerView(
+        statusViewDescriptor(STATUS_KEY, createStatusViewComponent(viewStore)),
+        statusCtx,
+      )
+      if (dispose !== undefined) {
+        store = viewStore
+        viewDispose = dispose
       }
     }
 
@@ -193,10 +311,16 @@ export function startStatusLine(ctx: Context, getEffective: () => EffectiveStatu
     statusCtx.effect(() => () => {
       clearInterval(timer)
       try {
-        dispose?.()
+        legacyDispose?.()
       } catch {
         // The host store is already gone on teardown — nothing to clear.
       }
+      try {
+        viewDispose?.()
+      } catch {
+        // Same teardown race as above; the rich view is best-effort too.
+      }
+      store?.clear()
     })
     render()
   })

@@ -155,9 +155,36 @@ assert.equal(deliveries[0].color, undefined, 'the shadow hint is neutral')
 for (const file of ['pink-night.json', 'pink-day.json', 'pink-ansi.json']) {
   assert.ok(deliveries[0].text.includes(file), `hint must name ${file}`)
 }
+
+// The same shadow situation additionally offers the one-shot guided cleanup
+// dialog through the real tuiDialogs seam (host-managed confirm panel).
+// Headless has no chat screen: the request parks in the dialog store, which
+// is exactly the early-boot timing the plugin relies on — the dialog becomes
+// visible as soon as the chat screen drains the store.
+const dialogsModule = await import(pathToFileURL(join(adapter, 'dialogs.js')).href)
+const dialogStore = dialogsModule.getHostDialogStore(app2.get('tuiDialogs'))
+assert.ok(dialogStore, 'the real host must expose the dialog store')
+const dialogDeadline = Date.now() + 5_000
+while (dialogStore.getSnapshot() === null && Date.now() < dialogDeadline) {
+  await sleep(25)
+}
+const dialogSnapshot = dialogStore.getSnapshot()
+assert.ok(dialogSnapshot, 'the shadow situation must offer the cleanup dialog')
+assert.equal(dialogSnapshot.kind, 'confirm')
+assert.ok(dialogSnapshot.title.includes('旧主题文件'), 'the dialog title names the cleanup')
+for (const file of ['pink-night.json', 'pink-day.json', 'pink-ansi.json']) {
+  assert.ok((dialogSnapshot.message ?? '').includes(file), `the dialog message must name ${file}`)
+}
+assert.equal(existsSync(join(dataDir2, 'themes', 'pink-night.json')), true, 'an unanswered dialog deletes nothing')
 await mount2.fiber.dispose()
 await sleep(50)
-console.log('OK toast: shadow hint delivered through the real tuiToast seam')
+assert.equal(dialogStore.getSnapshot(), null, 'disposing the activation settles the parked dialog')
+assert.equal(
+  existsSync(join(dataDir2, 'themes', 'pink-night.json')),
+  true,
+  'a cancelled dialog must not delete the shadow files',
+)
+console.log('OK toast: shadow hint delivered through the real tuiToast seam; cleanup dialog offered and settled')
 
 // ── Phase 3: apply-time toasts reach the sink through the seam-late retry ───
 // On a real 0.10 host the tuiToast service arrives with the extensions row,

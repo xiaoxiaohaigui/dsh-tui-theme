@@ -6,18 +6,25 @@
  * ever appended to the session log). The host owns rendering and
  * sanitization; text is scalars only.
  *
+ * Two render paths, chosen once per activation (no hot switching):
+ * - dsh-TUI >= 0.10.1 (`registerView` present): a themed one-row rich view
+ *   (see statusView.ts) whose colors come from the active pink palette;
+ * - older hosts: the historical scalar `set()` line, which the host renders
+ *   uncolored + terminal dim.
+ *
  * The line belongs to the pink palettes: by default it only renders while a
  * pink theme is active (checked per render with the host's own theme
  * precedence, so a mid-session /theme switch takes effect within the pref
  * cache TTL — at most one clock tick); `statusScope: 'all-themes'` opts it
- * into every other theme too.
+ * into every other theme too (uncolored there — non-pink palettes are not
+ * readable from a plugin).
  *
  * Cost discipline: `session/event` is a token-level firehose (assistant/chunk
- * et al.), but the rendered text only changes at turn boundaries and on the
- * clock, so renders run on turn/start, turn/end, session/disposed, and the
- * 15s tick — never per streamed chunk. The persisted-pref read behind the
- * theme check is cached for the same tick length so a render is pure string
- * building.
+ * et al.), but the rendered content only changes at turn boundaries and on
+ * the clock, so pushes/renders run on turn/start, turn/end, session/disposed,
+ * and the 15s tick — never per streamed chunk. The persisted-pref read behind
+ * the theme check and the palette read behind the colors are each cached for
+ * the same tick length so a render is pure string building.
  * @module dsh-tui-theme/statusLine
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -26,7 +33,11 @@ export type StatusScope = 'pink-only' | 'all-themes';
 export interface StatusOptions {
     /** Master switch (cordis-config layer only; not surfaced in /settings). */
     statusEnabled?: boolean;
-    /** Lead the line with the ✿ glyph. */
+    /** The character leading the line (default ✿; 1–2 display cells). */
+    statusGlyph?: string;
+    /** The character between the cells (default ·; 1–2 display cells). */
+    statusSeparator?: string;
+    /** Lead the line with the blossom glyph. */
     showGlyph?: boolean;
     /** Include the HH:MM clock. */
     showClock?: boolean;

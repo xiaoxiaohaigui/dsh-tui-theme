@@ -9,9 +9,12 @@
  * config layer (mirrors the host's own lang/fullscreen fields), and format()
  * displays the effective value instead of a misleading blank.
  *
- * Both services are consumed through `ctx.inject`, not apply-time `get`
- * probes: this row may start before the host's service rows, and the inject
- * fires whenever each service actually registers.
+ * The section splits into two navigation groups (背景跟随 / 状态行). The two
+ * text fields (glyph, separator) validate their drafts with parse(): an
+ * invalid draft blocks the save, an empty draft clears back to the cordis
+ * default. Both services are consumed through `ctx.inject`, not apply-time
+ * `get` probes: this row may start before the host's service rows, and the
+ * inject fires whenever each service actually registers.
  * @module dsh-tui-theme/settingsSection
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -33,6 +36,8 @@ export type PinkSettingsDoc = StatusOptions & {
  *   still-unset fields).
  * @param onDoc - Called with the defined-valued subset of the settings doc,
  *   initially and on every committed edit.
+ * @param dataDir - The host data directory (~/.dsh-tui), read by the
+ *   followSystem field's format() to surface the cached follow state.
  */
-export declare function registerPinkSettings(ctx: Context, cordis: StatusOptions, onDoc: (doc: PinkSettingsDoc) => void): void;
+export declare function registerPinkSettings(ctx: Context, cordis: StatusOptions, onDoc: (doc: PinkSettingsDoc) => void, dataDir?: string): void;
 //# sourceMappingURL=settingsSection.d.ts.map
