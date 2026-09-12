@@ -185,7 +185,11 @@ const cases = [
   ['pink-night', 'success', '#55303E', 3.0],
   ['pink-night', 'inactive', '#55303E', 3.0],
   ['pink-day', 'text', '#F6F3ED', 4.5],
-  ['pink-day', 'claude', '#F6F3ED', 3.0],
+  // claude drives the 5-row header display font and bold+underlined markdown
+  // headings; the sakura-day identity deliberately goes one notch lighter
+  // (#DE6E96), so the large-text floor here is 2.5 instead of 3.0. Body-text
+  // readability stays guarded by the 4.5 `text` case above.
+  ['pink-day', 'claude', '#F6F3ED', 2.5],
   ['pink-day', 'inactive', '#F6F3ED', 2.5],
   ['pink-day', 'success', '#F6F3ED', 3.0],
   ['pink-day', 'success', '#F3D7E0', 2.5],

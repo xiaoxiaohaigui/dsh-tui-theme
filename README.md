@@ -126,6 +126,8 @@ dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
 | 状态行文字颜色 | 插件状态行（tuiStatus）由宿主统一以**无色 + 终端 dim** 渲染，插件无法指定颜色（✿ 行因此继承终端默认前景色） | `screens/Chat.tsx` |
 | 输入框块状光标 | 宿主挂载期间隐藏终端原生光标（`?25l`），输入框光标由应用以**反色字符**自绘（`<Text inverse>`），颜色即主题 text/background 的反色——OSC 12 光标色只能染到不可见的原生光标，插件无法给输入光标上色（辅助功能模式 `CLAUDE_CODE_ACCESSIBILITY=1` 下原生光标才可见） | `ink/components/App.tsx`、`components/PromptInput.tsx` |
 | 正文链接 | OSC 8 超链接默认**写死的 ANSI 蓝**（`chalk.blue`）；注释说明 wrap-ansi 无法跨 OSC 8 保留主题 RGB 色，故链接色不读主题键 | `cc/hyperlink.ts` |
+| 顶栏像素鲸鱼颜色 | 四色调色板（描边/身体/腹部/嘴）**写死**且模块加载时预渲染，不读取任何主题键——任何主题都无法改变鲸鱼配色 | `components/Whale.tsx` |
+| 顶栏文字色 | ✦ dsh-TUI 字标与欢迎语经 `claude`（0.10.1 起 `accent`）跟主题；`DEEPSEEK` 像素字主色与渐变结尾色分别跟 `claude` / `claudeBlue_FOR_SYSTEM_SPINNER`（0.10.1 起 `accent` / `activity`）；**`HARNESS` 像素字只有主色跟主题——渐变结尾色是宿主固定常量 `PALE`，不读任何主题键**，主题覆盖不到它的结尾段；两词的扫过高光（`FLASH`）同为宿主常量。另：宿主 `parseRGB` 只认 `rgb(r,g,b)` 格式，hex/ansi 值会静默回退固定品牌蓝（pink-ansi 因此顶栏仍为蓝色） | `components/LogoV2.tsx`、`components/bigfont.ts`、`components/shimmer.ts`、`components/Spinner/spinnerUtils.ts` |
 | 主界面组件与布局 | 顶栏像素鲸鱼、工具卡、输入框等宿主组件不可被插件替换或改布局——平台规则（内建优先，无组件替换接缝）；主题能碰的只有颜色层 | 宿主架构约定 |
 
 这些都需要上游 dsh-TUI 修改（例如：把充能色/进度条分段色接入主题键、空余段判断改用 `isLightThemeActive()`、给输入光标增加主题键）。上游修复前，任何社区主题包都受同样约束。
