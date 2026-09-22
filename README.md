@@ -150,7 +150,7 @@ rm ~/.dsh-tui/theme-follow.json
 ## 开发
 
 ```sh
-npm install
+npm install --include=dev   # 见下方安装前提，本仓不提交 lockfile
 npm run build
 npm run verify
 npm run verify:package
@@ -159,7 +159,12 @@ DSH_TUI_SOURCE_ROOT=/path/to/dsh-TUI-source \
 npm run verify:host
 ```
 
-`verify:host` 默认使用开发依赖中的 dsh-TUI（当前为 0.10.1）进行零配置验证；需要验证旧版或发布基线时，再显式指向同一版本的宿主 adapter 与源码。需要锁定版本时，额外设置 `DSH_TUI_EXPECTED_VERSION`。
+安装前提（这两条会让普通 `npm install` 失败或静默不装依赖）：
+
+- **本仓有意不提交 `package-lock.json`。** devDependency 里的宿主 tarball 内嵌 `@dsh-std/*`，其包内 manifest 仍声明 `workspace:*`；提交的 lockfile 会被 npm 忠实重放，于是 `npm install` 与 `npm ci` 都报 `EUNSUPPORTEDPROTOCOL`。删掉 lockfile 后 npm 会直接跳过 tarball 内的 bundle 目录，正常安装。请勿把 lockfile 提交回来（CI 的 `contract` 档会直接拦下）。
+- **安装时不要带 `NODE_ENV=production`。** 该变量会让 npm 按 `omit=dev` 静默省略 devDependencies，表现为 `up to date` 但 `node_modules` 为空、随后 `tsc` 找不到。所以显式写 `--include=dev`（CI 里另外固定 `NODE_ENV=development`）。
+
+`verify:host` 默认使用开发依赖中的 dsh-TUI（当前为 0.10.1）进行零配置验证，无需本地宿主源码检出；需要验证旧版或发布基线时，再显式指向同一版本的宿主 adapter 与源码。需要锁定版本时，额外设置 `DSH_TUI_EXPECTED_VERSION`。CI 只覆盖这条 0.10.1 零配置线，0.9.x 兼容回归仍需本机按上面的 env 指向对应宿主 worktree。
 
 主题调色板改起来最直接：编辑 `themes/*.json` 后重新 `npm run verify`，再删掉 `~/.dsh-tui/themes/` 下对应文件让插件重装。
 

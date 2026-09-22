@@ -1,0 +1,96 @@
+name: CI
+
+# 门禁目标：任何 push 到 main 或 PR 都必须在干净环境重现插件的发布契约
+# （构建产物、运行时验证、包清单），从而挡住 G1–G5 类回归。
+# 背景与阻碍的完整证据见根目录 REVIEW.md 的 G1–G5。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 免依赖契约档：不需要 node_modules 和网络，几秒内就能发现最常见的两类回归
+  # ——提交的 lockfile 复活（G1，会让所有安装失败）与包清单/发布文件漂移。
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - name: Repo must not carry a lockfile
+        run: |
+          # 宿主 tarball 内 bundled 的 @dsh-std/* 仍声明 workspace:*，任何提交的
+          # lockfile 都会被 npm 重放并触发 EUNSUPPORTEDPROTOCOL；上游发布包装器
+          # 只重写了根 manifest。删除 lockfile 后 npm 直接跳过 bundle 目录。
+          if [ -f package-lock.json ]; then
+            echo "::error title=lockfile::package-lock.json must stay deleted (REVIEW.md G1)"
+            exit 1
+          fi
+      - run: node scripts/verify-package.mjs
+
+  # 完整验证档：零配置使用 devDependency 里钉住的 dsh-TUI（0.10.1），不需要
+  # 本地宿主源码检出。0.9.x 兼容回归仍留在发版前的本机门禁（REVIEW.md G4）。
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # 该变量一旦存在值 production，npm 会静默省略 devDependencies（G2）。
+      NODE_ENV: development
+      DSH_TUI_EXPECTED_VERSION: 0.10.1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package.json
+      - name: Install
+        run: npm install --include=dev --no-audit --no-fund
+      - name: Build
+        run: npm run build
+      - name: Committed artifacts must match a fresh build
+        run: |
+          if ! git diff --exit-code -- lib; then
+            echo "::error title=lib drift::lib/types disagrees with a fresh tsc build — rebuild and commit (REVIEW.md G5)"
+            exit 1
+          fi
+      - name: Verify entry points exist
+        run: test -f lib/types/index.js
+      - run: npm run verify
+      - run: npm run verify:package
+      - run: npm run verify:host
+
+  # 汇总门禁：branch protection 只需盯住这一个稳定名字。上游 job 失败或被取消
+  # 时本 job 照常运行并显式失败（被跳过的 check 不会阻塞合并，失败才会）。
+  ci-gate:
+    needs: [contract, verify]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every group to have succeeded
+        env:
+          CONTRACT: ${{ needs.contract.result }}
+          VERIFY: ${{ needs.verify.result }}
+        run: |
+          status=0
+          for pair in "contract:${CONTRACT}" "verify:${VERIFY}"; do
+            name="${pair%%:*}"
+            result="${pair#*:}"
+            echo "${name}: ${result}"
+            if [ "${result}" != "success" ]; then
+              echo "::error title=CI gate::${name} 结束状态为 ${result}（要求 success）"
+              status=1
+            fi
+          done
+          exit "${status}"

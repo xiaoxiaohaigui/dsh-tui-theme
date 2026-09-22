@@ -7,9 +7,14 @@ import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 
+// This repo deliberately ships no package-lock.json: the pinned host tarball
+// bundles @dsh-std/* packages whose manifests still declare workspace:*, and
+// npm replays a committed lockfile faithfully — every install (npm ci too)
+// dies with EUNSUPPORTEDPROTOCOL. Removing the lockfile makes npm skip the
+// bundled directories instead. The peer/dev consistency checks below therefore
+// read package.json only; CI's contract job guards the deletion (REVIEW.md G1).
 const pluginRoot = fileURLToPath(new URL('..', import.meta.url))
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-const lockfile = JSON.parse(readFileSync(new URL('../package-lock.json', import.meta.url), 'utf8'))
 const packCommand = process.platform === 'win32'
   ? { file: 'cmd.exe', args: ['/d', '/s', '/c', 'npm pack --dry-run --json --ignore-scripts'] }
   : { file: 'npm', args: ['pack', '--dry-run', '--json', '--ignore-scripts'] }
@@ -90,12 +95,10 @@ for (const name of Object.keys(packageJson.peerDependencies)) {
   assert.equal(devAccepted, true, `${name} dev pin must be accepted by its peer range`)
 }
 assert.equal(packageJson.dependencies?.['@deepseek-ai/schemastery'], undefined)
-const rootLock = lockfile.packages?.['']
-assert.ok(rootLock, 'lockfile must have root metadata')
-assert.equal(lockfile.version, packageJson.version)
-assert.deepEqual(rootLock.devDependencies, packageJson.devDependencies)
-assert.deepEqual(rootLock.peerDependencies, packageJson.peerDependencies)
-assert.equal(rootLock.dependencies, undefined)
+// The lockfile's root metadata is deliberately not compared here: this script
+// also ships inside the published tarball (package.json `files`), and npm never
+// packs a lockfile, so the check could not hold for a consumer. The repo-level
+// lockfile invariant lives in the CI contract job instead (REVIEW.md G1).
 assert.equal(existsSync(new URL('../lib/types/index.js', import.meta.url)), true)
 
 console.log(`✓ package manifest: ${packed.name}@${packed.version}, ${files.size} files`)

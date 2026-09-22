@@ -2,3 +2,10 @@ node_modules/
 *.tsbuildinfo
 .DS_Store
 REVIEW.md
+
+# npm local resolution output, not a source of truth: the pinned host tarball
+# bundles @dsh-std/* whose manifests still declare workspace:*, so any committed
+# lockfile makes every install fail with EUNSUPPORTEDPROTOCOL. Ignoring it keeps
+# the working tree clean after `npm install` and makes the intent explicit.
+# CI's contract job fails if a lockfile ever reappears (REVIEW.md G1).
+package-lock.json

@@ -1,3 +1,10 @@
-* text=auto
+# 行尾一律 LF：tsc 输出 LF，而 core.autocrlf=true 的 Windows 检出是 CRLF，
+# 于是每次 build 都会让 lib/types/* 在 git 里显示为已修改（内容其实一致），
+# 既污染本地工作区也让「构建产物必须与提交一致」的 CI 断言必然误报。
+# 详见根目录 REVIEW.md 的 G3。
+* text=auto eol=lf
 *.png binary
 *.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
