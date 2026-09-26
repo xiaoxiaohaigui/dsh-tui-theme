@@ -67,7 +67,7 @@ const applyAndSettle = async (ctx, config) => {
 
 /** A stub Cordis-like context; every seam optional and recorded. */
 function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs, entryId, deferThemes = false, deferToast = false, deferDialogs = false } = {}) {
-  const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], themeRegisters: [], warnings: [], infos: [] }
+  const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], themeRegisters: [], warnings: [], infos: [], children: {}, injectRequests: new Map() }
   let availableThemes = themes
   let availableToast = toast
   let availableDialogs = dialogs
@@ -75,6 +75,14 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs
   const deferredToastCallbacks = []
   const deferredDialogsCallbacks = []
   const logger = { info: msg => record.infos.push(String(msg)), warn: msg => record.warnings.push(String(msg)), error: () => {} }
+  const serviceFor = dep => ({
+    settings: settingsService,
+    tuiStatus: status,
+    tuiSettingsSections: sections,
+    tuiThemes: availableThemes,
+    tuiToast: availableToast,
+    tuiDialogs: availableDialogs,
+  })[dep]
   const base = {
     logger,
     // The Loader entry the host reports for this row: the ≥0.1.7 namespace
@@ -92,7 +100,11 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs
       const list = record.handlers.get(event) ?? []
       list.push(handler)
       record.handlers.set(event, list)
-      return () => {}
+      // Like the real `ctx.on`: the returned disposer unregisters the listener.
+      return () => {
+        const index = list.indexOf(handler)
+        if (index >= 0) list.splice(index, 1)
+      }
     },
     effect(factory) {
       const dispose = factory()
@@ -100,44 +112,81 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs
     },
     inject(deps, callback) {
       // Simulate cordis: the callback runs once every requested service
-      // exists (immediately here), and property access works inside it.
-      const services = {
-        settings: settingsService,
-        tuiStatus: status,
-        tuiSettingsSections: sections,
-        tuiThemes: availableThemes,
-        tuiToast: availableToast,
-        tuiDialogs: availableDialogs,
+      // exists (immediately here), and property access works inside it. The
+      // request is remembered so a scenario can replay the body the way a
+      // service reload does — fresh child fiber, previous one recycled.
+      const key = deps.join('+')
+      const props = () => Object.fromEntries(deps.map(dep => [dep, serviceFor(dep)]))
+      const run = () => callback(childCtx(props(), key))
+      // A deferred body becomes replayable when it actually runs for the first
+      // time, never while its service is still missing.
+      const defer = queue => {
+        queue.push(() => {
+          record.injectRequests.set(key, run)
+          run()
+        })
       }
       if (deferThemes && availableThemes === undefined && deps.includes('tuiThemes')) {
-        deferredThemeCallbacks.push(callback)
+        defer(deferredThemeCallbacks)
         return
       }
       if (deferToast && availableToast === undefined && deps.includes('tuiToast')) {
-        deferredToastCallbacks.push(callback)
+        defer(deferredToastCallbacks)
         return
       }
       if (deferDialogs && availableDialogs === undefined && deps.includes('tuiDialogs')) {
-        deferredDialogsCallbacks.push(callback)
+        defer(deferredDialogsCallbacks)
         return
       }
-      if (deps.every(dep => services[dep] !== undefined)) {
-        const props = Object.fromEntries(deps.map(dep => [dep, services[dep]]))
-        callback({ ...base, ...props })
+      if (deps.every(dep => serviceFor(dep) !== undefined)) {
+        record.injectRequests.set(key, run)
+        run()
       }
     },
   }
+  /**
+   * An `inject` child context, as cordis creates one per body run: its own
+   * effect ledger, disposed when the fiber is recycled (a service arriving
+   * again). Disposers also land in `record.disposers`, so a scenario's flat
+   * "disposal never throws" sweep still reaches them.
+   */
+  const childCtx = (props, key) => {
+    const effects = []
+    const child = {
+      ...base,
+      ...props,
+      effect(factory) {
+        const dispose = factory()
+        if (typeof dispose === 'function') {
+          effects.push(dispose)
+          record.disposers.push(dispose)
+        }
+      },
+      dispose() {
+        for (const dispose of effects.splice(0)) dispose()
+      },
+    }
+    if (key !== undefined) (record.children[key] ??= []).push(child)
+    return child
+  }
+  /** Disposes the children of one `inject` request and replays its body. */
+  record.reinject = key => {
+    const replay = record.injectRequests.get(key)
+    if (replay === undefined) throw new Error(`no inject request recorded for "${key}"`)
+    for (const child of (record.children[key] ?? []).splice(0)) child.dispose()
+    replay()
+  }
   record.activateThemes = service => {
     availableThemes = service
-    for (const callback of deferredThemeCallbacks.splice(0)) callback({ ...base, tuiThemes: service })
+    for (const run of deferredThemeCallbacks.splice(0)) run()
   }
   record.activateToast = service => {
     availableToast = service
-    for (const callback of deferredToastCallbacks.splice(0)) callback({ ...base, tuiToast: service })
+    for (const run of deferredToastCallbacks.splice(0)) run()
   }
   record.activateDialogs = service => {
     availableDialogs = service
-    for (const callback of deferredDialogsCallbacks.splice(0)) callback({ ...base, tuiDialogs: service })
+    for (const run of deferredDialogsCallbacks.splice(0)) run()
   }
   return { ctx: base, record }
 }
@@ -279,6 +328,17 @@ const emit = (record, event, ...args) => {
   // Settings namespace registered and the section declaration remains within
   // the shared host form contract.
   assert.equal(settingsRecord.registerCalls.length, 1)
+  // The registration schema is the ≤0.1.6 host's only field list, and it is
+  // hand-written (settingsSection.registerNamespaceScope) — the one place the
+  // card's seven keys are not derived from LIVE_CONFIG_KEYS. Set equality keeps
+  // the "one editable surface" invariant true across both generations: a key
+  // added to LIVE_CONFIG_KEYS alone would render and save on a ≥0.1.7 card and
+  // be silently unpersistable on an old host.
+  assert.deepEqual(
+    Object.keys(settingsRecord.registerCalls[0][1].dict).sort(),
+    [...LIVE_CONFIG_KEYS].sort(),
+    'the ≤0.1.6 namespace schema and LIVE_CONFIG_KEYS must stay equal',
+  )
   assert.equal(sectionsCalls.length, 1)
   assertSettingsContract(assert, sectionsCalls[0])
 
@@ -494,6 +554,50 @@ const emit = (record, event, ...args) => {
   // Leave the sandbox as scenario 2b did: a fresh themes dir for scenario 3.
   rmSync(sandboxThemes, { recursive: true, force: true })
   console.log('✓ settings degradation: missing surface and unusable entry id are diagnosed')
+}
+
+// ── 2g. settings service reload: the volatile listener is never stacked ─────
+{
+  // `ctx.inject()` runs its body in a fiber cordis recycles when the service
+  // arrives again (a settings reload, an isolate/plugin restart). The listener
+  // itself must live on the plugin's own context — that is where the loader
+  // delivers `loader/volatile-update` — but a disposer owned there survives the
+  // recycling and lets the second pass add a second listener, so every later
+  // event re-reads the config twice.
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  mkdirSync(join(sandboxHome, '.dsh-tui'), { recursive: true })
+  writeFileSync(join(sandboxHome, '.dsh-tui', 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+  invalidateThemePrefCacheForTests()
+  const settingsRecord = { registerCalls: [], configureCalls: [] }
+  const { ctx, record } = makeStubCtx({
+    status: fakeStatus([]),
+    settingsService: fakeConfigSettingsService(settingsRecord),
+    entryId: 'dsh-tui-theme',
+  })
+  let glyphReads = 0
+  await applyAndSettle(ctx, {
+    autoInstallThemes: true,
+    statusEnabled: true,
+    followSystem: false,
+    statusGlyph: liveRef(() => { glyphReads += 1; return '✿' }),
+    statusSeparator: '·',
+    showGlyph: liveRef(() => true),
+    showClock: liveRef(() => true),
+    showTurns: false,
+    statusScope: 'pink-only',
+  })
+  const listeners = () => (record.handlers.get('loader/volatile-update') ?? []).length
+  assert.equal(listeners(), 1, 'the first pass registers exactly one listener')
+
+  record.reinject('settings')
+  assert.equal(listeners(), 1, 'a second inject pass must not stack a listener')
+  const before = glyphReads
+  emit(record, 'loader/volatile-update', [['statusGlyph']])
+  assert.equal(glyphReads - before, 1, 'one event must drive exactly one re-read')
+
+  for (const dispose of record.disposers) dispose()
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  console.log('✓ settings reload: the inject child is recycled, the volatile listener is not duplicated')
 }
 
 // ── 3. idempotence + user-file protection ───────────────────────────────────

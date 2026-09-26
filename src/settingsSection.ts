@@ -133,8 +133,9 @@ export interface PinkSettingsWiring {
  * registration API, the settings namespace behind it. Each part waits for its
  * own service; neither is required for the other.
  *
- * @param ctx - The plugin's own activation context (also the Config owner the
- *   ≥0.1.7 page policy and the volatile-update event must be bound to).
+ * @param ctx - The plugin's own activation context: the Config owner the
+ *   ≥0.1.7 page policy and the volatile-update listener must attach to (their
+ *   disposers ride the inject child, which is what a service reload recycles).
  * @param wiring - The value source and sink for the card.
  * @param dataDir - The host data directory (~/.dsh-tui), read by the
  *   followSystem field's format() to surface the cached follow state.
@@ -163,7 +164,7 @@ export function registerPinkSettings(
     diagnoseConfigGeneration(ctx, ns, wiring.hasLiveFields)
     configureOwnPage(ctx, settingsCtx, settings)
     wiring.onDoc(definedOnly(wiring.readLive()))
-    watchLiveConfig(ctx, wiring)
+    watchLiveConfig(ctx, settingsCtx, wiring)
   })
 
   ctx.inject(['tuiSettingsSections'], sectionsCtx => {
@@ -291,14 +292,20 @@ function configureOwnPage(ctx: Context, settingsCtx: Context, settings: Settings
 /**
  * Follow the loader's live-config announcements.
  *
- * Registered on the plugin's own context: the loader emits
- * `loader/volatile-update` on the Config-owning fiber, which is the same
- * reason the host's compat shim passes the Config owner rather than the
- * injected child. Without the event the initial read stands for the session —
- * logged, because that means `/settings` edits would not reach the running
- * plugin until it reloads.
+ * The *listener* registers on the plugin's own context: the loader emits
+ * `loader/volatile-update` on the Config-owning fiber and `Context.filter`
+ * delivers it to that fiber alone, which is the same reason the host's compat
+ * shim passes the Config owner rather than the injected child.
+ *
+ * Its *disposal*, however, belongs to the inject child (`owner`). This body
+ * runs once per settings-service arrival, in a fiber cordis recycles, while the
+ * plugin fiber outlives every pass: an effect owned by the plugin would let a
+ * second pass stack a second listener on top of the first (each event then
+ * re-reading the config twice). Without the event the initial read stands for
+ * the session — logged, because that means `/settings` edits would not reach
+ * the running plugin until it reloads.
  */
-function watchLiveConfig(ctx: Context, wiring: PinkSettingsWiring): void {
+function watchLiveConfig(ctx: Context, owner: Context, wiring: PinkSettingsWiring): void {
   const refresh = (): void => {
     wiring.onDoc(definedOnly(wiring.readLive()))
   }
@@ -315,7 +322,10 @@ function watchLiveConfig(ctx: Context, wiring: PinkSettingsWiring): void {
     )
     return
   }
-  ctx.effect(() => dispose as () => void)
+  // `ctx.on` already ties the listener to the plugin fiber (cordis's own
+  // effect inside `Context.on`); this one exists for the recycled inject child,
+  // so it must run on that child's ledger rather than the plugin's.
+  owner.effect(() => dispose as () => void)
 }
 
 function joinHomeDataDir(): string {

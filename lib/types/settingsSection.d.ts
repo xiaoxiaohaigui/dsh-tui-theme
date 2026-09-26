@@ -90,8 +90,9 @@ export interface PinkSettingsWiring {
  * registration API, the settings namespace behind it. Each part waits for its
  * own service; neither is required for the other.
  *
- * @param ctx - The plugin's own activation context (also the Config owner the
- *   ≥0.1.7 page policy and the volatile-update event must be bound to).
+ * @param ctx - The plugin's own activation context: the Config owner the
+ *   ≥0.1.7 page policy and the volatile-update listener must attach to (their
+ *   disposers ride the inject child, which is what a service reload recycles).
  * @param wiring - The value source and sink for the card.
  * @param dataDir - The host data directory (~/.dsh-tui), read by the
  *   followSystem field's format() to surface the cached follow state.
