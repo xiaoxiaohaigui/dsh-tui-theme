@@ -83,7 +83,7 @@ dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-<版本号>.tgz
 
 三项装饰（花符 / 时钟 / 轮数）全关时状态行整体消失。另有仅 profile 层的开关（写在 `cordis.patch.yml`，不出现在 `/settings`）：`autoInstallThemes`、`statusEnabled`。
 
-> 上表就是本插件的可编辑面：卡片字段与 `src/liveConfig.ts` 的 `LIVE_CONFIG_KEYS` 逐键相等，由 `npm run verify` 双向断言。设置服务两代适配方式见[决策记录](docs/decisions/2026-09-26-settings-generation-adaptation.md)。
+> 上表就是本插件的可编辑面：卡片字段与 `src/liveConfig.ts` 的 `LIVE_CONFIG_KEYS` 逐键相等，由 `npm run verify` 双向断言。
 
 ## 缓存背景跟随
 
@@ -154,7 +154,7 @@ rm ~/.dsh-tui/theme-follow.json
 ## 兼容性
 
 - **dsh-TUI 下限 0.8.8**（状态行与设置面板，0.9.3 实测）。0.10.0 及更新版本使用运行时主题注册；0.10.1 起状态行走富状态视图按主题配色（更旧宿主自动回退无色标量行）；缺 `dsh-tui-extensions` 扩展面的宿主自动降级为「仅安装三套主题」，不报错。
-- **`dsh-settings` 两代都支持**：≤ 0.1.6（dsh-TUI 0.9.x/0.10.x）走插件注册命名空间 + `scope.watch`；≥ 0.1.7（dsh-TUI 0.11+）走 Config volatile 字段投影 + `loader/volatile-update` 重读。判定按能力探测，不解析版本号；两条路径的失败都写日志而不是静默。依据见[决策记录](docs/decisions/2026-09-26-settings-generation-adaptation.md)。
+- **`dsh-settings` 两代都支持**：≤ 0.1.6（dsh-TUI 0.9.x/0.10.x）走插件注册命名空间 + `scope.watch`；≥ 0.1.7（dsh-TUI 0.11+）走 Config volatile 字段投影 + `loader/volatile-update` 重读。判定按能力探测，不解析版本号；两条路径的失败都写日志而不是静默。
 - Node `^22.19 || >=24`，纯 ESM，MIT。
 
 ## 开发

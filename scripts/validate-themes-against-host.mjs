@@ -206,7 +206,6 @@ const cases = [
   // measured 2.47 is accepted for this decorative gradient end and guarded
   // here at 2.4 — the floor exists to catch further lightening, not to
   // re-litigate the accepted 0.03 gap below the 2.5 large-text floor.
-  // Decision record: docs/decisions/2026-09-12-pink-day-claude-family-lightening.md
   ['pink-day', 'claudeBlue_FOR_SYSTEM_SPINNER', '#F6F3ED', 2.4],
   ['pink-day', 'inactive', '#F6F3ED', 2.5],
   ['pink-day', 'success', '#F6F3ED', 3.0],

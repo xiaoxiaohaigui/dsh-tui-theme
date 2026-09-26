@@ -83,7 +83,7 @@ Precedence: `/settings` user layer > `cordis.yml` config layer > built-in defaul
 
 Turning all three decorations (glyph / clock / turns) off hides the whole status line. Two profile-only switches live in `cordis.patch.yml` and never appear in `/settings`: `autoInstallThemes` and `statusEnabled`.
 
-> This table *is* the plugin's editable surface: the card fields and `LIVE_CONFIG_KEYS` in `src/liveConfig.ts` match key for key, asserted both ways by `npm run verify`. How the two generations of the settings service are handled is recorded in the [decision note](docs/decisions/2026-09-26-settings-generation-adaptation.md) (in Chinese).
+> This table *is* the plugin's editable surface: the card fields and `LIVE_CONFIG_KEYS` in `src/liveConfig.ts` match key for key, asserted both ways by `npm run verify`.
 
 ## Cached background follow
 
@@ -154,7 +154,7 @@ rm ~/.dsh-tui/theme-follow.json
 ## Compatibility
 
 - **Minimum dsh-TUI: 0.8.8** (status line and settings section; measured on 0.9.3). 0.10.0 and newer use runtime theme registration; 0.10.1 and newer colour the status line through the rich status view (older hosts fall back to the colourless scalar line); hosts without the `dsh-tui-extensions` surface degrade gracefully to “install the three themes only” without errors.
-- **Both generations of `dsh-settings` are supported**: ≤ 0.1.6 (dsh-TUI 0.9.x/0.10.x) uses plugin-registered namespaces + `scope.watch`; ≥ 0.1.7 (dsh-TUI 0.11+) uses Config volatile-field projection + `loader/volatile-update` re-reads. The branch is chosen by capability probing, never by parsing versions, and failures on either path are logged rather than swallowed. See the [decision note](docs/decisions/2026-09-26-settings-generation-adaptation.md) (in Chinese).
+- **Both generations of `dsh-settings` are supported**: ≤ 0.1.6 (dsh-TUI 0.9.x/0.10.x) uses plugin-registered namespaces + `scope.watch`; ≥ 0.1.7 (dsh-TUI 0.11+) uses Config volatile-field projection + `loader/volatile-update` re-reads. The branch is chosen by capability probing, never by parsing versions, and failures on either path are logged rather than swallowed.
 - Node `^22.19 || >=24`, pure ESM, MIT.
 
 ## Development

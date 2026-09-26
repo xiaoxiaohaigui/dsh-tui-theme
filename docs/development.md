@@ -64,4 +64,4 @@ CI 只覆盖 0.10.1 零配置线；0.9.x 兼容回归仍需本机按上面的 en
 
 ## 可编辑面只有一个事实来源
 
-`src/liveConfig.ts` 的 `LIVE_CONFIG_KEYS` 驱动 Config 的 volatile 标记，并与 `/settings` 卡片字段逐键相等（`npm run verify` 双向断言，`npm run verify:settings` 再对真宿主投影断言一次）。改配置项时，卡片字段、Config 与 README 的配置表要同步更新。设计依据见[决策记录](decisions/2026-09-26-settings-generation-adaptation.md)。
+`src/liveConfig.ts` 的 `LIVE_CONFIG_KEYS` 驱动 Config 的 volatile 标记，并与 `/settings` 卡片字段逐键相等（`npm run verify` 双向断言，`npm run verify:settings` 再对真宿主投影断言一次）。改配置项时，卡片字段、Config 与 README 的配置表要同步更新。

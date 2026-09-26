@@ -64,4 +64,4 @@ CI only covers the 0.10.1 zero-config line; 0.9.x compatibility regressions stil
 
 ## One source of truth for the editable surface
 
-`LIVE_CONFIG_KEYS` in `src/liveConfig.ts` drives the Config's volatile markers and matches the `/settings` card fields key for key (`npm run verify` asserts both ways; `npm run verify:settings` asserts the real host projection again). When you add or remove a config field, update the card fields, the Config and the README config table together. Design rationale: [decision note](decisions/2026-09-26-settings-generation-adaptation.md) (in Chinese).
+`LIVE_CONFIG_KEYS` in `src/liveConfig.ts` drives the Config's volatile markers and matches the `/settings` card fields key for key (`npm run verify` asserts both ways; `npm run verify:settings` asserts the real host projection again). When you add or remove a config field, update the card fields, the Config and the README config table together.
