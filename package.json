@@ -1,6 +1,6 @@
 {
   "name": "dsh-tui-theme",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Sakura-pink themes for dsh-TUI with optional cached background follow (pink-day/pink-night), a blossom status line, and a /settings section. No shortcuts, no commands.",
   "type": "module",
   "main": "lib/types/index.js",
@@ -28,8 +28,9 @@
     "preverify": "npm run build",
     "verify": "node scripts/verify.mjs",
     "verify:package": "node scripts/verify-package.mjs",
+    "verify:settings": "node scripts/verify-settings-generation.mjs",
     "verify:host": "npm run build && node scripts/headless-order-test.mjs && node scripts/runtime-themes-headless.mjs && node --import tsx/esm scripts/validate-themes-against-host.mjs",
-    "release:check": "npm run build && npm run verify && npm run verify:package",
+    "release:check": "npm run build && npm run verify && npm run verify:package && npm run verify:settings",
     "prepack": "npm run release:check"
   },
   "license": "MIT",

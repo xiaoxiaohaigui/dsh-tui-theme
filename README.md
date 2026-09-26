@@ -117,6 +117,8 @@ dsh plugin --profile dsh-tui add -w dsh-tui-theme@latest
 
 三项装饰全关时状态行整体消失。另有仅 profile 层的开关（`cordis.patch.yml`，不出现在 /settings）：`autoInstallThemes`、`statusEnabled`。
 
+上表就是本插件的**可编辑面**：卡片字段与 `src/liveConfig.ts` 的 `LIVE_CONFIG_KEYS` 必须逐键相等（`npm run verify` 双向断言），因为 dsh-TUI ≥ 0.11（`dsh-settings` ≥ 0.1.7）的设置服务不再接受插件注册命名空间，而是把**本插件 Config 里标了 volatile 的字段**投影成表单、以 **Loader 条目 id**（默认 `dsh-tui-theme`）作命名空间；保存直接写进 profile 补丁并即时生效。老宿主（≤ 0.10.x，`dsh-settings` ≤ 0.1.6）仍走插件自己注册命名空间的旧路径，行为不变。两条路径共用同一串命名空间，因此给插件行改过 id 的用户在新宿主上会以新 id 存取设置（旧代下改动 id 也会跟着走）。
+
 ## 受宿主限制、目前无法定制的部分
 
 以下元素的颜色/形态由 dsh-TUI 宿主**硬编码**，不读取任何主题键，主题 JSON 与插件接缝都覆盖不到（dsh-TUI 0.9.3 实测）：
@@ -154,6 +156,9 @@ npm install --include=dev   # 见下方安装前提，本仓不提交 lockfile
 npm run build
 npm run verify
 npm run verify:package
+# 代际门禁：本仓 devDependency 的 dsh-settings 是旧代，脚本会明确跳过并以 0 退出；
+# 要真正验证 ≥0.1.7 的 Config 投影，把 DSH_SETTINGS_DIR 指到真机那份安装
+DSH_SETTINGS_DIR="$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh-settings" npm run verify:settings
 DSH_TUI_ADAPTER_DIR=/path/to/dsh-TUI/lib/types/dsh-adapter \
 DSH_TUI_SOURCE_ROOT=/path/to/dsh-TUI-source \
 npm run verify:host
@@ -171,4 +176,5 @@ npm run verify:host
 ## 兼容性
 
 - **dsh-TUI 版本下限：0.8.8**（状态行与设置面板；0.9.3 实测）。0.10.0 及更新版本使用运行时主题注册；0.10.1 起状态行经富状态视图按主题配色（更旧宿主自动回退无色标量行）；更旧的宿主缺 `dsh-tui-extensions` 扩展面时，插件自动降级为“仅安装三套主题”，不报错。
+- **设置服务两代都支持**：`dsh-settings` ≤ 0.1.6（dsh-TUI 0.9.x/0.10.x）走插件注册命名空间 + `scope.watch`；≥ 0.1.7（dsh-TUI 0.11+，`/settings` 曾显示「命名空间未注册」）走 Config volatile 字段投影 + `loader/volatile-update` 重读。判定按能力探测，不解析版本号；两条路径的失败都会写日志而不是静默。适配依据见 `docs/decisions/2026-09-26-settings-generation-adaptation.md`。
 - Node `^22.19 || >=24`，纯 ESM，MIT。

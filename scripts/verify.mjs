@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire, syncBuiltinESMExports } from 'node:module'
 import assert from 'node:assert/strict'
-import { assertSettingsContract } from './expected-settings-contract.mjs'
+import { assertSettingsContract, SETTINGS_FIELDS } from './expected-settings-contract.mjs'
 
 const sandboxHome = mkdtempSync(join(tmpdir(), 'pink-theme-verify-'))
 const originalThemeOverride = process.env.DSH_TUI_THEME
@@ -43,7 +43,9 @@ const require = createRequire(import.meta.url)
 const builtinFs = require('node:fs')
 const sandboxThemes = join(sandboxHome, '.dsh-tui', 'themes')
 
-const { name, apply } = await import('../lib/types/index.js')
+const { name, apply, Config } = await import('../lib/types/index.js')
+const { LIVE_CONFIG_KEYS, hasLiveConfigFields, readConfigValues } = await import('../lib/types/liveConfig.js')
+const { resolveSettingsNamespace, SETTINGS_NS } = await import('../lib/types/settingsSection.js')
 const { installBundledThemes, readBundledThemes, findShadowedBundledThemes } = await import('../lib/types/themeAssets.js')
 const { startStatusLine, invalidateThemePrefCacheForTests } = await import('../lib/types/statusLine.js')
 const { setToastRetryDelaysForTests } = await import('../lib/types/toast.js')
@@ -64,7 +66,7 @@ const applyAndSettle = async (ctx, config) => {
 }
 
 /** A stub Cordis-like context; every seam optional and recorded. */
-function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs, deferThemes = false, deferToast = false, deferDialogs = false } = {}) {
+function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs, entryId, deferThemes = false, deferToast = false, deferDialogs = false } = {}) {
   const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], themeRegisters: [], warnings: [], infos: [] }
   let availableThemes = themes
   let availableToast = toast
@@ -75,6 +77,9 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs
   const logger = { info: msg => record.infos.push(String(msg)), warn: msg => record.warnings.push(String(msg)), error: () => {} }
   const base = {
     logger,
+    // The Loader entry the host reports for this row: the ≥0.1.7 namespace
+    // and the owner of the Config the page policy must attach to.
+    fiber: entryId === undefined ? undefined : { entry: { options: { id: entryId } } },
     get(serviceName) {
       if (serviceName === 'tuiStatus') return status
       if (serviceName === 'tuiSettingsSections') return sections
@@ -163,6 +168,11 @@ const fakeThemes = (record, { throws = false } = {}) => ({
 })
 const fakeSettingsService = (record, doc) => ({
   register(namespace, schema) {
+    // Called as a method, never as a detached reference: the real provider's
+    // register() reads its own state, so losing `this` throws there — the bug
+    // runtime-themes-headless phase 4 caught against the real service. ESM is
+    // strict, so a detached call sees `this === undefined`.
+    if (this === undefined) throw new Error('register() lost its receiver')
     record.registerCalls.push([namespace, schema])
     return {
       get: () => doc,
@@ -170,6 +180,26 @@ const fakeSettingsService = (record, doc) => ({
     }
   },
 })
+/**
+ * A `dsh-settings` ≥0.1.7 service: no `register` at all, a per-instance page
+ * policy instead. The values do not come from here — they are the plugin's own
+ * live Config (liveConfig.readConfigValues), which the loader rewrites in
+ * place. The owner fiber is recorded so the scenario can assert the policy
+ * landed on the Config-owning plugin fiber, never the inject child.
+ */
+const fakeConfigSettingsService = record => ({
+  configure(presentation, owner) {
+    if (this === undefined) throw new Error('configure() lost its receiver')
+    record.configureCalls.push([presentation, owner])
+    return () => {}
+  },
+})
+/** The cosmokit Volatile protocol: a frozen branded ref whose value the loader
+ *  rewrites (`Symbol.for('cosmokit.volatile.write')` — the probe
+ *  readConfigValues reads; `extra` models a ref carrying more than `get`).
+ *  `read` is a thunk so a scenario can model the in-place rewrite. */
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+const liveRef = (read, extra) => Object.freeze({ get: read, [VOLATILE_WRITE]: () => {}, ...extra })
 /** Records delivered toasts; the first `dropFirst` shows are dropped (no sink yet). */
 const fakeToast = (deliveries, { dropFirst = 0 } = {}) => {
   let shown = 0
@@ -314,6 +344,156 @@ const emit = (record, event, ...args) => {
   await applyAndSettle(ctx)
   assert.equal(record.warnings.length, 3, 'each hostile registration is contained and warned')
   console.log('✓ hostile runtime service: registration failures warn, never propagate')
+}
+
+// ── 2d. live-config marking: the card and the marked Config keys are one set ─
+{
+  // The marker is what a ≥0.1.7 host projects (`volatileForm`), and the card's
+  // field paths are what it serves; set equality both ways is the invariant
+  // that keeps a field from rendering editable while nothing serves it (or a
+  // marked key editable with no UI). This repo's schemastery is the 3.18.2
+  // baseline with no `.volatile()`, so this also pins the `meta` fallback a
+  // plugin resolving an old copy depends on (the病根 of dsh-TUI #990).
+  const dict = Config.dict
+  assert.equal(hasLiveConfigFields(Config), true, 'the shipped Config carries the live marker')
+  for (const key of LIVE_CONFIG_KEYS) {
+    assert.equal(dict[key]?.meta?.volatile, true, `${key} must be marked live`)
+  }
+  for (const key of ['autoInstallThemes', 'statusEnabled']) {
+    assert.equal(dict[key]?.meta?.volatile, undefined, `${key} stays a cordis-only knob`)
+  }
+  assert.deepEqual(
+    SETTINGS_FIELDS.map(([path]) => path.join('.')).sort(),
+    [...LIVE_CONFIG_KEYS].sort(),
+    'the card fields and LIVE_CONFIG_KEYS must stay equal',
+  )
+
+  // Unwrapping: the protocol brand is the authority (a ref may carry extra
+  // keys), a bare `{ get }` stays a fallback, and plain values pass through.
+  assert.deepEqual(
+    readConfigValues({
+      statusGlyph: liveRef(() => '❀', { id: 'live-1' }),
+      showClock: liveRef(() => true),
+      showTurns: { get: () => false },
+      statusScope: 'all-themes',
+    }),
+    { statusGlyph: '❀', showClock: true, showTurns: false, statusScope: 'all-themes' },
+  )
+  assert.deepEqual(readConfigValues(undefined), {})
+
+  // Namespace resolution: the Loader entry id when it fits the section
+  // grammar, the documented constant otherwise (both generations agree).
+  assert.equal(SETTINGS_NS, 'dsh-tui-theme')
+  const withEntry = id => ({ fiber: { entry: { options: { id } } } })
+  assert.equal(resolveSettingsNamespace(withEntry('custom-theme')), 'custom-theme')
+  assert.equal(resolveSettingsNamespace(withEntry('Custom.TUI')), SETTINGS_NS)
+  assert.equal(resolveSettingsNamespace({}), SETTINGS_NS)
+  console.log('✓ live config: 3.18.2 meta marking, card↔key parity, ref unwrapping, namespace fallback')
+}
+
+// ── 2e. dsh-settings ≥0.1.7: the card is fed by the live Config ─────────────
+{
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  mkdirSync(join(sandboxHome, '.dsh-tui'), { recursive: true })
+  writeFileSync(join(sandboxHome, '.dsh-tui', 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+  invalidateThemePrefCacheForTests()
+  const statusCalls = []
+  const sectionsCalls = []
+  const settingsRecord = { registerCalls: [], configureCalls: [] }
+  const { ctx, record } = makeStubCtx({
+    status: fakeStatus(statusCalls),
+    sections: fakeSections(sectionsCalls),
+    settingsService: fakeConfigSettingsService(settingsRecord),
+    entryId: 'dsh-tui-theme',
+  })
+  // Apply-time shape of a ≥0.1.7 host: the marked fields arrive as live refs
+  // (one of them carrying an extra key — the shape the brand probe exists
+  // for), the two cordis-only knobs as plain values. The thunks model the
+  // loader's in-place rewrite.
+  const live = { glyph: '❀', clock: false }
+  await applyAndSettle(ctx, {
+    autoInstallThemes: true,
+    statusEnabled: true,
+    followSystem: false,
+    statusGlyph: liveRef(() => live.glyph, { id: 'live-1' }),
+    statusSeparator: '·',
+    showGlyph: liveRef(() => true),
+    showClock: liveRef(() => live.clock),
+    showTurns: false,
+    statusScope: 'pink-only',
+  })
+
+  assert.equal(sectionsCalls.length, 1, 'the card registers exactly once')
+  assert.equal(sectionsCalls[0].ns, 'dsh-tui-theme', 'the card follows the Loader entry id')
+  assertSettingsContract(assert, sectionsCalls[0])
+  assert.equal(settingsRecord.registerCalls.length, 0, 'no namespace registration on the ≥0.1.7 generation')
+  assert.deepEqual(
+    settingsRecord.configureCalls,
+    [[{ auto: false }, ctx.fiber]],
+    'the auto page is declined on the Config-owning plugin fiber',
+  )
+  assert.deepEqual(record.warnings, [], 'a healthy ≥0.1.7 host warns about nothing')
+  assert.equal(
+    (record.handlers.get('loader/volatile-update') ?? []).length,
+    1,
+    'the volatile event is followed on the plugin context',
+  )
+
+  // Unwrapped refs feed the line: a raw ref fails the string check and would
+  // show the cordis default glyph instead of the configured one.
+  assert.equal(statusCalls.at(-1)[1], '❀')
+
+  // The loader rewrites the ref and announces it: the edit lands on the next
+  // render without a reload.
+  live.clock = true
+  emit(record, 'loader/volatile-update', [['showClock']])
+  emit(record, 'session/event', { id: 'n1' }, { type: 'turn/end' })
+  assert.match(statusCalls.at(-1)[1], /^❀ · \d{2}:\d{2}$/, 'a volatile update re-reads the edited config')
+
+  for (const dispose of record.disposers) dispose()
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  console.log('✓ settings ≥0.1.7: Config-derived card on the plugin fiber, live refs unwrapped, volatile update re-read')
+}
+
+// ── 2f. ≥0.1.7 degradation is diagnosed, never a bare badge ─────────────────
+{
+  // A settings service with neither surface (an unrecognized generation): one
+  // info line, and the card still registers.
+  const sectionsCalls = []
+  const bare = makeStubCtx({
+    sections: fakeSections(sectionsCalls),
+    settingsService: {},
+    entryId: 'dsh-tui-theme',
+  })
+  await applyAndSettle(bare.ctx)
+  assert.deepEqual(bare.record.warnings, [])
+  assert.equal(
+    bare.record.infos.some(line => line.includes('neither the namespace registration')),
+    true,
+    'the missing surface is explained',
+  )
+  assert.equal(sectionsCalls.length, 1, 'the card still registers')
+
+  // A Loader entry id the section grammar rejects: the host keys by that id,
+  // so warn and fall back to the constant for the card and the registration.
+  const fallbackCalls = []
+  const fallbackRecord = { registerCalls: [], configureCalls: [] }
+  const invalid = makeStubCtx({
+    sections: fakeSections(fallbackCalls),
+    settingsService: fakeConfigSettingsService(fallbackRecord),
+    entryId: 'Custom.TUI',
+  })
+  await applyAndSettle(invalid.ctx)
+  assert.equal(fallbackCalls[0].ns, 'dsh-tui-theme', 'an unusable entry id falls back to the constant')
+  assert.equal(
+    invalid.record.warnings.some(line => line.includes('Loader entry id')),
+    true,
+    'the entry-id mismatch is warned about',
+  )
+  assert.equal(fallbackRecord.configureCalls.length, 1, 'the page policy is still attempted')
+  // Leave the sandbox as scenario 2b did: a fresh themes dir for scenario 3.
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  console.log('✓ settings degradation: missing surface and unusable entry id are diagnosed')
 }
 
 // ── 3. idempotence + user-file protection ───────────────────────────────────

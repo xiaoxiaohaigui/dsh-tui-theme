@@ -68,6 +68,9 @@ jobs:
         run: test -f lib/types/index.js
       - run: npm run verify
       - run: npm run verify:package
+      # 代际门禁：devDependency 里的 dsh-settings 仍是 ≤0.1.6，本档按能力探测
+      # 直接跳过并以 0 退出；基线一旦抬到 ≥0.1.7，它就真正跑 Config 投影断言。
+      - run: npm run verify:settings
       - run: npm run verify:host
 
   # 汇总门禁：branch protection 只需盯住这一个稳定名字。上游 job 失败或被取消

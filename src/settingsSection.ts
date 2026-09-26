@@ -2,12 +2,34 @@
  * /settings integration (seam six: tuiSettingsSections over the dsh settings
  * service).
  *
- * Registers the `pink-theme` settings namespace and a declarative editing
- * section for it. Storage, schema validation, and layered resolution stay on
- * the dsh settings service; the TUI only renders. Fields carry no schema
- * defaults on purpose — an unset user layer must fall through to the cordis
- * config layer (mirrors the host's own lang/fullscreen fields), and format()
- * displays the effective value instead of a misleading blank.
+ * Registers a declarative editing section for the plugin's settings and, on
+ * hosts that still have the registration API, the settings namespace itself.
+ * Storage, schema validation, and layered resolution stay on the dsh settings
+ * service; the TUI only renders. Fields carry no schema defaults on purpose —
+ * an unset user layer must fall through to the cordis config layer (mirrors
+ * the host's own lang/fullscreen fields), and format() displays the effective
+ * value instead of a misleading blank.
+ *
+ * Two generations, branched by capability (never by version),
+ * `dsh-settings`'s 0.1.7 break being the reason
+ * (docs/decisions/2026-09-24-settings-generation-adaptation.md):
+ *
+ * - **≤0.1.6** (dsh-TUI 0.9.x/0.10.x) — `settings.register(ns, schema)` owns
+ *   the namespace. The card's paths resolve against the scope schema declared
+ *   here, and `scope.watch` pushes edits into the plugin.
+ * - **≥0.1.7** (dsh-TUI 0.11+) — there is no registration API at all
+ *   (`SettingsForms` projects each profile entry's *Config* instead). The
+ *   namespace is this plugin's profile entry id (see
+ *   {@link resolveSettingsNamespace}) and the form schema is `Config` filtered
+ *   to its volatile fields (liveConfig.ts). Edits land in the profile patch,
+ *   the loader rewrites those same refs in place, and
+ *   `loader/volatile-update` announces it; this module re-reads the live config
+ *   on that event. The card stays ours, so the auto-generated page is turned
+ *   off with `configure({ auto: false })`.
+ *
+ * A miss in either direction is silent and user-visible only as a card that
+ * renders but never saves (≤0.1.6) or a `命名空间未注册` badge (≥0.1.7) — hence
+ * the branch below warns instead of swallowing the failure.
  *
  * The section splits into two navigation groups (背景跟随 / 状态行). The two
  * text fields (glyph, separator) validate their drafts with parse(): an
@@ -40,82 +62,115 @@ export type PinkSettingsDoc = StatusOptions & {
 /** Structural views of host services; the real types live in the host. */
 interface SettingsScopeLike {
   get(): unknown
-  watch(listener: (value: unknown) => void): unknown
+  /** Returns the disposer the activation's effect ledger has to own. */
+  watch(listener: (value: unknown) => void): () => void
 }
+/** The union of both generations' surfaces: the ≤0.1.6 namespace registration
+ *  and the ≥0.1.7 Config-derived forms with their per-instance page policy. */
 interface SettingsServiceLike {
-  register(namespace: unknown, schema: unknown): SettingsScopeLike
+  register?(namespace: unknown, schema: unknown): SettingsScopeLike
+  configure?(presentation: { auto?: boolean }, owner?: unknown): unknown
 }
 interface TuiSettingsSectionsLike {
   register(section: TuiSettingsSection): () => void
 }
 
+/** The settings namespace this plugin owns by default, and the fallback when
+ *  the Loader entry id is unusable. On ≥0.1.7 hosts the *entry id* is the
+ *  namespace the host keys by, so the effective value is
+ *  {@link resolveSettingsNamespace}: a default install lands on exactly this
+ *  string (`cordis.patch.yml` pins `id: dsh-tui-theme`), and it stays the name
+ *  the README documents for settings storage. */
+export const SETTINGS_NS = PLUGIN_ID
+
+/** The grammar plugin-owned sections must satisfy
+ *  (`tuiSettingsSections.register`; the host only relaxes it for its own
+ *  sections, which may carry opaque Loader ids). */
+const NAMESPACE_PATTERN = /^[a-z][a-z0-9_-]*$/
+
+/** The plugin's Loader entry id, when the host gives us one. */
+function loaderEntryId(ctx: Context): string | undefined {
+  const fiber = ctx.fiber as (typeof ctx.fiber & { entry?: { options?: { id?: unknown } } }) | undefined
+  const id = fiber?.entry?.options?.id
+  return typeof id === 'string' ? id : undefined
+}
+
 /**
- * Register the settings namespace (mirror the resolved document to the
- * caller) and, separately, the /settings section for it. Each part waits for
- * its own service; neither is required for the other.
+ * The namespace this plugin's settings live under: the Loader entry id when it
+ * satisfies the section grammar, {@link SETTINGS_NS} otherwise.
  *
- * @param ctx - The plugin's own activation context.
- * @param cordis - The cordis-config layer (shown as the effective value for
- *   still-unset fields).
- * @param onDoc - Called with the defined-valued subset of the settings doc,
- *   initially and on every committed edit.
+ * A `dsh-settings` ≥0.1.7 host keys namespaces by the Loader entry id
+ * (`SettingsForms.describe()` → `entry.options.id`), so keying the card off
+ * anything else breaks the moment the row is renamed — the fragility dsh-TUI
+ * #990 records, where even the host's own section had to stop hard-coding its
+ * name. Both generations resolve to the same string here, so the card, the
+ * legacy registration and the host's projection cannot disagree.
+ */
+export function resolveSettingsNamespace(ctx: Context): string {
+  const id = loaderEntryId(ctx)
+  return id !== undefined && NAMESPACE_PATTERN.test(id) ? id : SETTINGS_NS
+}
+
+/** Everything the wiring needs from the plugin's own activation. */
+export interface PinkSettingsWiring {
+  /** The cordis-config layer (the effective value format() falls back to for
+   *  still-unset fields). */
+  readonly cordis: StatusOptions & { followSystem?: boolean }
+  /** Current plain values of the plugin's own row config. On ≥0.1.7 hosts the
+   *  loader rewrites the live refs in place, so calling this again after
+   *  `loader/volatile-update` yields the edited values. */
+  readLive(): PinkSettingsDoc
+  /** Whether the row-config schema carries the live marker
+   *  (`hasLiveConfigFields(Config)`); diagnostics only. */
+  readonly hasLiveFields: boolean
+  /** Receives the defined-valued subset of the settings doc — the initial one
+   *  and every later edit. */
+  onDoc(doc: PinkSettingsDoc): void
+}
+
+/**
+ * Register the /settings section and, on hosts that still have the
+ * registration API, the settings namespace behind it. Each part waits for its
+ * own service; neither is required for the other.
+ *
+ * @param ctx - The plugin's own activation context (also the Config owner the
+ *   ≥0.1.7 page policy and the volatile-update event must be bound to).
+ * @param wiring - The value source and sink for the card.
  * @param dataDir - The host data directory (~/.dsh-tui), read by the
  *   followSystem field's format() to surface the cached follow state.
  */
 export function registerPinkSettings(
   ctx: Context,
-  cordis: StatusOptions,
-  onDoc: (doc: PinkSettingsDoc) => void,
+  wiring: PinkSettingsWiring,
   dataDir: string = joinHomeDataDir(),
 ): void {
-  ctx.inject(['settings'], settingsCtx => {
-    const settings = (settingsCtx as Context & { settings: SettingsServiceLike }).settings
-    try {
-      // dsh-settings validates the raw namespace at registration time. Keep
-      // this as a plain string so alpha.2 hosts, which removed the runtime
-      // settingsNamespace() helper, can load the plugin without a missing
-      // named export while older hosts retain the same behavior.
-      const scope = settings.register(
-        PLUGIN_ID as SettingsNamespace,
-        z.object({
-          followSystem: z.boolean(),
-          showGlyph: z.boolean(),
-          showClock: z.boolean(),
-          showTurns: z.boolean(),
-          statusScope: z.union(['pink-only', 'all-themes'] as const),
-          statusGlyph: z.string(),
-          statusSeparator: z.string(),
-        }),
-      )
+  const ns = resolveSettingsNamespace(ctx)
 
-      const emit = (doc: unknown): void => {
-        if (doc === null || typeof doc !== 'object') return
-        const clean: PinkSettingsDoc = {}
-        for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
-          if (value !== undefined) (clean as Record<string, unknown>)[key] = value
-        }
-        onDoc(clean)
-      }
-      // Own the watcher on the inject-scoped ledger so it survives exactly as
-      // long as this activation (scope.watch's disposer is otherwise leaked).
-      settingsCtx.effect(() => {
-        emit(scope.get())
-        return scope.watch(emit)
-      })
-    } catch (error) {
-      // A duplicate registration (hot reload race) or a stricter host must
-      // not take the plugin — or the TUI — down.
-      settingsCtx.logger.warn(
-        `dsh-tui-theme: settings namespace registration failed: ${String(error)}`,
-      )
+  ctx.inject(['settings'], settingsCtx => {
+    const settings = (settingsCtx as Context & { settings?: SettingsServiceLike }).settings
+    if (settings === undefined) return
+
+    if (typeof settings.register === 'function') {
+      registerNamespaceScope(settingsCtx, settings, wiring, ns)
+      return
     }
+    if (typeof settings.configure !== 'function') {
+      settingsCtx.logger.info(
+        'dsh-tui-theme: the settings service exposes neither the namespace registration nor the Config-derived surface; the settings card stays unavailable this session',
+      )
+      return
+    }
+    diagnoseConfigGeneration(ctx, ns, wiring.hasLiveFields)
+    configureOwnPage(ctx, settingsCtx, settings)
+    wiring.onDoc(definedOnly(wiring.readLive()))
+    watchLiveConfig(ctx, wiring)
   })
 
   ctx.inject(['tuiSettingsSections'], sectionsCtx => {
     const sections = (sectionsCtx as Context & { tuiSettingsSections: TuiSettingsSectionsLike })
       .tuiSettingsSections
     try {
-      const unregister = sections.register(sectionDefinition(cordis, dataDir))
+      const unregister = sections.register(sectionDefinition(ns, wiring.cordis, dataDir))
       sectionsCtx.effect(() => () => unregister())
     } catch (error) {
       // A duplicate registration (hot reload race) or a stricter host must
@@ -125,6 +180,142 @@ export function registerPinkSettings(
       )
     }
   })
+}
+
+/** The defined-valued subset of a settings document: the ≤0.1.6 user layer and
+ *  the ≥0.1.7 live config both arrive with unset keys present but undefined. */
+function definedOnly(doc: unknown): PinkSettingsDoc {
+  if (doc === null || typeof doc !== 'object') return {}
+  const clean: PinkSettingsDoc = {}
+  for (const [key, value] of Object.entries(doc as Record<string, unknown>)) {
+    if (value !== undefined) (clean as Record<string, unknown>)[key] = value
+  }
+  return clean
+}
+
+/**
+ * ≤0.1.6 generation: own the namespace and follow its scope. The schema spells
+ * out the same field set the card exposes and deliberately carries no defaults
+ * — an unset user layer must fall through to the cordis layer, which format()
+ * already displays as the effective value.
+ */
+function registerNamespaceScope(
+  settingsCtx: Context,
+  settings: SettingsServiceLike,
+  wiring: PinkSettingsWiring,
+  ns: string,
+): void {
+  try {
+    // Call it as a method (optional-call on the property): the provider's
+    // register() reads its own state, so a detached reference would lose
+    // `this` and throw.
+    //
+    // The namespace is passed as a plain string: dsh-settings validates the
+    // raw value at registration time, and alpha.2 hosts removed the runtime
+    // settingsNamespace() helper, so a branded value would be a missing named
+    // export there while older hosts keep the same behavior.
+    const scope = settings.register?.(
+      ns as SettingsNamespace,
+      z.object({
+        followSystem: z.boolean(),
+        showGlyph: z.boolean(),
+        showClock: z.boolean(),
+        showTurns: z.boolean(),
+        statusScope: z.union(['pink-only', 'all-themes'] as const),
+        statusGlyph: z.string(),
+        statusSeparator: z.string(),
+      }),
+    )
+    if (scope === undefined) throw new Error('the settings service exposes no register()')
+    // Own the watcher on the inject-scoped ledger so it survives exactly as
+    // long as this activation (scope.watch's disposer is otherwise leaked).
+    const emit = (doc: unknown): void => {
+      wiring.onDoc(definedOnly(doc))
+    }
+    settingsCtx.effect(() => {
+      emit(scope.get())
+      return scope.watch(emit)
+    })
+  } catch (error) {
+    // Contained, but never silent: swallowing the provider's error is what
+    // made the ≥0.1.7 transition surface as a bare `命名空间未注册` badge with
+    // no line in the log to explain it.
+    settingsCtx.logger.warn(
+      `dsh-tui-theme: settings namespace registration failed: ${String(error)}`,
+    )
+  }
+}
+
+/**
+ * Explain the two ways a ≥0.1.7 host can leave this card unserved, instead of
+ * letting `命名空间未注册` be the only clue (the diagnosis cost of dsh-TUI #990).
+ * Both are warnings, not failures: the row config and every other seam keep
+ * working.
+ */
+function diagnoseConfigGeneration(ctx: Context, ns: string, hasLiveFields: boolean): void {
+  const entryId = loaderEntryId(ctx)
+  if (entryId !== undefined && entryId !== ns) {
+    ctx.logger.warn(
+      `dsh-tui-theme: the settings service keys namespaces by Loader entry id "${entryId}", which is not a valid section namespace — the settings card cannot be served; rename the plugin row to a lowercase kebab-case id`,
+    )
+  }
+  if (!hasLiveFields) {
+    ctx.logger.warn(
+      'dsh-tui-theme: no row-config field carries the live marker — this host cannot serve the settings card (needs a schemastery that accepts volatile fields); the row config keeps working',
+    )
+  }
+}
+
+/**
+ * ≥0.1.7 generation: the namespace is this profile entry and its form schema is
+ * the marked slice of `Config`, so there is nothing to register. The card is
+ * the plugin's own page, so opt out of the auto-generated one; the policy must
+ * be attached to the plugin's own fiber (the entry that owns the Config), not
+ * to the injected child.
+ */
+function configureOwnPage(ctx: Context, settingsCtx: Context, settings: SettingsServiceLike): void {
+  try {
+    const dispose = settings.configure?.({ auto: false }, ctx.fiber)
+    if (typeof dispose === 'function') {
+      const stop = dispose as () => void
+      settingsCtx.effect(() => stop)
+    }
+  } catch (error) {
+    // Decorative: the card renders and saves either way; a future
+    // auto-generated page would merely duplicate it. `configure` throws when
+    // this fiber already registered a policy (a second inject pass).
+    settingsCtx.logger.info(`dsh-tui-theme: settings page policy not applied (${String(error)})`)
+  }
+}
+
+/**
+ * Follow the loader's live-config announcements.
+ *
+ * Registered on the plugin's own context: the loader emits
+ * `loader/volatile-update` on the Config-owning fiber, which is the same
+ * reason the host's compat shim passes the Config owner rather than the
+ * injected child. Without the event the initial read stands for the session —
+ * logged, because that means `/settings` edits would not reach the running
+ * plugin until it reloads.
+ */
+function watchLiveConfig(ctx: Context, wiring: PinkSettingsWiring): void {
+  const refresh = (): void => {
+    wiring.onDoc(definedOnly(wiring.readLive()))
+  }
+  const events = ctx as unknown as { on?: (event: string, listener: () => void) => unknown }
+  let dispose: unknown
+  try {
+    dispose = events.on?.('loader/volatile-update', refresh)
+  } catch {
+    dispose = undefined
+  }
+  if (typeof dispose !== 'function') {
+    ctx.logger.info(
+      'dsh-tui-theme: loader/volatile-update is unavailable; /settings edits apply at the next plugin reload',
+    )
+    return
+  }
+  ctx.effect(() => dispose as () => void)
 }
 
 function joinHomeDataDir(): string {
@@ -149,11 +340,12 @@ function followCacheDate(at: unknown): string | undefined {
 
 /** The declarative /settings block (labels bilingual, zh via descriptions). */
 function sectionDefinition(
+  ns: string,
   cordis: StatusOptions & { followSystem?: boolean },
   dataDir: string,
 ): TuiSettingsSection {
   return {
-    ns: PLUGIN_ID,
+    ns,
     title: 'pink-theme',
     descriptions: { zh: 'pink-theme' },
     groups: [
