@@ -52,7 +52,7 @@
   - schemastery 未来把 `.volatile()` 改名 **且** 冻结 `meta` → 标记彻底失效，`verify:settings` 的「live 标记存在」断言会红。
   - 直接写 `meta.volatile` 绕过框架的 volatile 校验；本仓只在**扁平** Config（标的是叶子）上用它。
   - 旧代下给插件行改过 id 的用户，`settings.yaml` 里旧 `dsh-tui-theme` 一节不再生效（键跟随新 id）；默认安装 id 不变，且新代本来就以 entry id 为身份——接受并在此记录。
-- 真机确认（2026-09-26）：`verify:settings` 对真机 `0.1.7-rc.1` + schemastery 3.18.4 的 20 条断言全绿；构建产物已装进本机 `dsh-tui` profile（原 0.7.1 目录整目录备份、profile 依赖声明未改），`dsh --profile dsh-tui --dump-config` 条目 id 与卡片 `ns` 一致；`/settings` 卡片徽标的肉眼复核是最后一步（见 `REVIEW.md` T4）。
+- 真机确认（2026-09-26）：`verify:settings` 对真机 `0.1.7-rc.1` + schemastery 3.18.4 的 20 条断言全绿；构建产物装进本机 `dsh-tui` profile（原 0.7.1 目录整目录备份、profile 依赖声明未改），`dsh --profile dsh-tui --dump-config` 条目 id 与卡片 `ns` 一致；**用户肉眼确认 `/settings` 里 pink-theme 卡片已无 `命名空间未注册` 徽标**（见 `REVIEW.md` T4）。
 
 ## 关联
 
