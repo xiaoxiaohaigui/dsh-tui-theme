@@ -120,10 +120,10 @@ dsh-TUI 没有向插件公开安全的终端查询接缝。为了不与宿主的
 
 ## 宿主硬编码、主题覆盖不到的部分
 
-以下元素的颜色/形态由 dsh-TUI 宿主硬编码，不读任何主题键，主题 JSON 与插件接缝都无法覆盖（0.9.3 实测）。这些都需要上游 dsh-TUI 修改（例如把充能色/进度条分段色接入主题键、空余段判断改用 `isLightThemeActive()`、给输入光标增加主题键）；上游修复前，任何社区主题包都受同样约束。
+以下元素的颜色/形态由 dsh-TUI 宿主硬编码，不读任何主题键，主题 JSON 与插件接缝都无法覆盖（0.9.3 首测，0.11.0 逐条复核、0.11.2 复查，其中「顶栏文字色」一项的表述已更正）。这些都需要上游 dsh-TUI 修改（例如把充能色/进度条分段色接入主题键、空余段判断改用 `isLightThemeActive()`、给输入光标增加主题键）；上游修复前，任何社区主题包都受同样约束。
 
 <details>
-<summary>展开完整清单（9 项，含宿主源码位置）</summary>
+<summary>展开完整清单（10 项，含宿主源码位置）</summary>
 
 | 元素 | 现状 | 位置（宿主源码） |
 | --- | --- | --- |
@@ -133,8 +133,9 @@ dsh-TUI 没有向插件公开安全的终端查询接缝。为了不与宿主的
 | 状态行文字颜色 | 旧路径标量状态行由宿主统一以无色 + 终端 dim 渲染；≥ 0.10.1 插件已改用 `tuiStatus.registerView` 富状态视图按主题配色，旧宿主自动回退标量路径 | `screens/Chat.tsx`、`dsh-adapter/status.ts` |
 | 输入框块状光标 | 宿主隐藏终端原生光标，输入框光标由应用以反色字符自绘，颜色即主题 text/background 的反色；OSC 12 只能染到不可见的原生光标（辅助功能模式 `CLAUDE_CODE_ACCESSIBILITY=1` 下原生光标才可见） | `ink/components/App.tsx`、`components/PromptInput.tsx` |
 | 正文链接 | OSC 8 超链接默认写死的 ANSI 蓝（`chalk.blue`）；注释说明 wrap-ansi 无法跨 OSC 8 保留主题 RGB 色，故链接色不读主题键 | `cc/hyperlink.ts` |
-| 顶栏像素鲸鱼颜色 | 四色调色板（描边/身体/腹部/嘴）写死且模块加载时预渲染，任何主题都无法改变鲸鱼配色 | `components/Whale.tsx` |
-| 顶栏文字色 | ✦ 字标与欢迎语跟主题（`claude`，0.10.1 起 `accent`）；`DEEPSEEK` 像素字主色/渐变结尾色跟 `claude`/`claudeBlue_FOR_SYSTEM_SPINNER`（0.10.1 起 `accent`/`activity`）；`HARNESS` 只有主色跟主题，结尾段是宿主固定常量 `PALE`，两词的扫过高光（`FLASH`）同为常量。另：宿主 `parseRGB` 只认 `rgb(r,g,b)`，hex/ansi 值静默回退固定品牌蓝（pink-ansi 因此顶栏仍为蓝色） | `components/LogoV2.tsx`、`components/bigfont.ts`、`components/shimmer.ts`、`components/Spinner/spinnerUtils.ts` |
+| 顶栏像素鲸鱼颜色 | 调色板写死且模块加载时预渲染，任何主题都无法改变鲸鱼配色——0.9.3 为四色（描边/身体/腹部/嘴），0.10.x 起为六色（另有心形与睡眠 Z 两个状态色） | `components/Whale.tsx` |
+| 顶栏文字色 | ✦ 字标与欢迎语跟主题（`claude`，0.10.1 起 `accent`）；字标扫过时的**高光也跟主题**——`LogoV2` 把 `theme.accentShimmer`（0.10.1 起的键名，旧名 `claudeShimmer`）当高光色传给 `sweep()`，本插件三主题均已设值（可见时机仅开场与 `/deepseek` 重播的扫过瞬间）；`DEEPSEEK`/`HARNESS` 两个像素词与欢迎语的扫过高光仍写死为常量 `FLASH`，`HARNESS` 的渐变结尾段是固定常量 `PALE`，其余主色/渐变结尾色跟 `claude`/`claudeBlue_FOR_SYSTEM_SPINNER`（0.10.1 起 `accent`/`activity`）。另：宿主 `parseRGB` 只认 `rgb(r,g,b)`，hex/ansi 值静默回退固定品牌蓝（pink-ansi 因此顶栏仍为蓝色） | `components/LogoV2.tsx`、`components/bigfont.ts`、`components/shimmer.ts`、`components/Spinner/spinnerUtils.ts` |
+| 思考消息折叠头脉冲字 | 思考仍在流式输出时，折叠头行首的 spinner 字形在常量 `BRAND`→`ICE` 之间做正弦脉冲（minimal 模式直接去色）；同一行的标题文字才跟主题（hover 取 `text`，否则 dim） | `components/messages/AssistantThinkingMessage.tsx`、`components/shimmer.ts` |
 | 主界面组件与布局 | 顶栏鲸鱼、工具卡、输入框等宿主组件不可被插件替换或改布局——平台规则（内建优先，无组件替换接缝），主题能碰的只有颜色层 | 宿主架构约定 |
 
 </details>
@@ -155,6 +156,7 @@ rm ~/.dsh-tui/theme-follow.json
 
 - **dsh-TUI 下限 0.8.8**（状态行与设置面板，0.9.3 实测）。0.10.0 及更新版本使用运行时主题注册；0.10.1 起状态行走富状态视图按主题配色（更旧宿主自动回退无色标量行）；缺 `dsh-tui-extensions` 扩展面的宿主自动降级为「仅安装三套主题」，不报错。
 - **`dsh-settings` 两代都支持**：≤ 0.1.6（dsh-TUI 0.9.x/0.10.x）走插件注册命名空间 + `scope.watch`；≥ 0.1.7（dsh-TUI 0.11+）走 Config volatile 字段投影 + `loader/volatile-update` 重读。判定按能力探测，不解析版本号；两条路径的失败都写日志而不是静默。
+- **dsh 运行时 `0.2.0-rc.1` 起有启动期 peer 校验**：宿主读 bundle 的 `peerDependencies`，把 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 段与运行时版本比对，不匹配就跳过整个 bundle（stderr 提示 `skipping profile bundle`）。本插件的 peer 段覆盖 `0.1.0-rc.6`–`0.1.x` 与 `0.2.0-rc.1`–`0.2.x`（自 v0.7.3 起，新世代写作 `^0.2.0-rc.1`），因此 0.2 宿主正常加载。宿主校验固定用 `includePrerelease` 语义，故 0.2 线的预发布档同样放行；而 npm 默认预发布语义更窄，将来出现的 `0.2.1-rc.x` 之类档位在 npm 侧会报 unmet peer（框架包由 dsh CLI 提供、profile 不装 `@deepseek-ai/*`，实际不受影响）。
 - Node `^22.19 || >=24`，纯 ESM，MIT。
 
 ## 开发

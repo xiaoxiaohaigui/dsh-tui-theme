@@ -65,6 +65,7 @@ for (const required of [
   'docs/screenshots/settings.png',
   'scripts/verify.mjs',
   'scripts/verify-package.mjs',
+  'scripts/verify-peer-coverage.mjs',
   'scripts/verify-settings-generation.mjs',
   'scripts/headless-order-test.mjs',
   'scripts/runtime-themes-headless.mjs',
@@ -89,8 +90,13 @@ for (const name of Object.keys(packageJson.peerDependencies)) {
   assert.equal(packageJson.dependencies?.[name], undefined, `${name} must not be a runtime dependency`)
   const peerRange = packageJson.peerDependencies[name]
   const devRange = packageJson.devDependencies?.[name]
+  assert.ok(devRange !== undefined, `${name} must keep a development baseline`)
   // Development baselines may pin one concrete prerelease while the published
-  // peer contract remains a union of compatible release lines.
+  // peer contract remains a union of compatible release lines. This script
+  // deliberately needs no dependencies (CI's contract job runs it without an
+  // install), so the comparison stays literal; the semver-shaped half of the
+  // contract — which runtime versions the union must cover and which it must
+  // not — lives in scripts/verify-peer-coverage.mjs (REVIEW.md R-013).
   const devAccepted = peerRange.split('||').some(entry => {
     const candidate = entry.trim()
     return candidate === devRange || candidate.replace(/^\^/u, '') === devRange

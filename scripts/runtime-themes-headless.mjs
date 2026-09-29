@@ -241,77 +241,216 @@ assert.equal(JSON.parse(readFileSync(join(dataDir3, 'theme.json'), 'utf8')).them
 await mount3.fiber.dispose()
 console.log('OK toast phase 3: apply-time self-heal and boot-follow toasts delivered on the real host')
 
-// ── Phase 4: settings namespace registers against the REAL service, late ────
-// The stub suites cover the namespace registration with fakes, and phase 3
-// stands in a minimal fake at apply time; this phase mounts a real
-// @deepseek-ai/dsh-settings SettingsProvider AFTER the plugin (and after the
-// extensions row), so the plugin's parked ['settings'] inject fires against
-// the genuine register()/scope/watch machinery. The end-to-end signal: a
-// user-layer followSystem write through the real service flips theme.json.
-const sandbox4 = mkdtempSync(join(tmpdir(), 'pink-settings-late-'))
-process.env.USERPROFILE = sandbox4
-process.env.HOME = sandbox4
-const dataDir4 = join(sandbox4, '.dsh-tui')
-mkdirSync(dataDir4, { recursive: true })
-writeFileSync(join(dataDir4, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }, null, 2))
-
-const { SettingsProvider } = await import(pathToFileURL(hostRequire.resolve('@deepseek-ai/dsh-settings')).href)
-
-/** Minimal concrete provider: in-memory storage, no file, no background IO. */
-class MemorySettingsProvider extends SettingsProvider {
-  static provide = 'settings'
-  writable = true
-  stored = {}
-  async load() {
-    return { ...this.stored }
-  }
-
-  async persist(ns, section) {
-    this.stored[ns] = { ...section }
-  }
-}
-
-const app4 = new Context()
-await app4.plugin(pluginHost.default ?? pluginHost)
-const mount4 = await mountPlugin(app4)
-await mount4.context.plugin(pink)
-await app4.plugin(extensions.default ?? extensions)
-// Deliberately last: the namespace registration can only be "late" when the
-// service arrives after everything the plugin injects at apply time.
-await app4.plugin(MemorySettingsProvider)
-
-const provider = app4.get('settings')
-assert.ok(provider, 'the real dsh-settings provider must be mounted')
-const settingsDeadline = Date.now() + 5_000
-while (provider.get(SETTINGS_NAMESPACE) === undefined && Date.now() < settingsDeadline) {
-  await sleep(25)
-}
-assert.ok(
-  provider.get(SETTINGS_NAMESPACE),
-  `the plugin namespace must register with the real service within ${5_000}ms of its late arrival`,
-)
-await provider.update(SETTINGS_NAMESPACE, { followSystem: true })
-assert.equal(
-  provider.get(SETTINGS_NAMESPACE)?.followSystem,
-  true,
-  'the real service must resolve the committed user layer for the namespace',
-)
-
-const prefPath4 = join(dataDir4, 'theme.json')
-const followDeadline = Date.now() + 5_000
-let followed = false
-while (!followed && Date.now() < followDeadline) {
+// ── Phase 4: the settings generation this host ships ───────────────────────
+// Two generations, branched by capability and never by a version parse:
+//   ≤0.1.6 — the namespace-registration provider still exists, so the plugin
+//            must register into a REAL SettingsProvider that arrives late.
+//   ≥0.1.7 — that API is gone (`SettingsProvider.register` was deleted) and the
+//            card is the plugin's Config-derived form instead. There is nothing
+//            to mount here: the projection is gated by `npm run verify:settings`
+//            against this same install, and phase 5 below covers the
+//            loader-delivery half on real cordis.
+// Branching matters: this phase used to assume the old provider unconditionally
+// and died with `Class extends value undefined` on any ≥0.1.7 host, taking the
+// whole `verify:host` run down with it (REVIEW.md R-010).
+//
+// Which settings package to mount: the one resolved from the host adapter, or
+// `DSH_SETTINGS_DIR` when set — the same knob `verify:settings` takes, so the
+// ≤0.1.6 registration path stays runnable after the repo's dev baseline moved to
+// the Config-derived generation. A host without the package at all reports that
+// instead of dying on an unresolved specifier.
+const settingsDirPath = (() => {
+  const explicit = process.env.DSH_SETTINGS_DIR
+  if (explicit !== undefined && explicit !== '') return explicit
   try {
-    followed = JSON.parse(readFileSync(prefPath4, 'utf8')).theme === 'pink-day'
+    return dirname(hostRequire.resolve('@deepseek-ai/dsh-settings/package.json'))
   } catch {
-    // Pref not written yet.
+    return undefined
   }
-  if (!followed) await sleep(25)
+})()
+const settingsEntry = settingsDirPath === undefined ? undefined : join(settingsDirPath, 'lib', 'index.js')
+
+if (settingsEntry === undefined || !existsSync(settingsEntry)) {
+  console.log('* this host resolves no @deepseek-ai/dsh-settings; the settings phases are not runnable here')
+  if (settingsDirPath !== undefined) console.log(`  (looked in ${settingsDirPath})`)
+} else {
+  const settingsVersion = JSON.parse(readFileSync(join(settingsDirPath, 'package.json'), 'utf8')).version
+  const settingsLib = await import(pathToFileURL(settingsEntry).href)
+  const SettingsProvider = settingsLib.SettingsProvider
+
+  if (typeof SettingsProvider !== 'function') {
+    console.log(`* settings ${settingsVersion}: no namespace-registration provider (Config-derived generation)`)
+    console.log('* skipping the namespace-registration phase; run `npm run verify:settings` for the card projection')
+  } else {
+    const sandbox4 = mkdtempSync(join(tmpdir(), 'pink-settings-late-'))
+    process.env.USERPROFILE = sandbox4
+    process.env.HOME = sandbox4
+    const dataDir4 = join(sandbox4, '.dsh-tui')
+    mkdirSync(dataDir4, { recursive: true })
+    writeFileSync(join(dataDir4, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }, null, 2))
+
+    /** Minimal concrete provider: in-memory storage, no file, no background IO. */
+    class MemorySettingsProvider extends SettingsProvider {
+      static provide = 'settings'
+      writable = true
+      stored = {}
+      async load() {
+        return { ...this.stored }
+      }
+
+      async persist(ns, section) {
+        this.stored[ns] = { ...section }
+      }
+    }
+
+    const app4 = new Context()
+    await app4.plugin(pluginHost.default ?? pluginHost)
+    const mount4 = await mountPlugin(app4)
+    await mount4.context.plugin(pink)
+    await app4.plugin(extensions.default ?? extensions)
+    // Deliberately last: the namespace registration can only be "late" when the
+    // service arrives after everything the plugin injects at apply time.
+    await app4.plugin(MemorySettingsProvider)
+
+    const provider = app4.get('settings')
+    assert.ok(provider, 'the real dsh-settings provider must be mounted')
+    const settingsDeadline = Date.now() + 5_000
+    while (provider.get(SETTINGS_NAMESPACE) === undefined && Date.now() < settingsDeadline) {
+      await sleep(25)
+    }
+    assert.ok(
+      provider.get(SETTINGS_NAMESPACE),
+      `the plugin namespace must register with the real service within ${5_000}ms of its late arrival`,
+    )
+    await provider.update(SETTINGS_NAMESPACE, { followSystem: true })
+    assert.equal(
+      provider.get(SETTINGS_NAMESPACE)?.followSystem,
+      true,
+      'the real service must resolve the committed user layer for the namespace',
+    )
+
+    const prefPath4 = join(dataDir4, 'theme.json')
+    const followDeadline = Date.now() + 5_000
+    let followed = false
+    while (!followed && Date.now() < followDeadline) {
+      try {
+        followed = JSON.parse(readFileSync(prefPath4, 'utf8')).theme === 'pink-day'
+      } catch {
+        // Pref not written yet.
+      }
+      if (!followed) await sleep(25)
+    }
+    assert.equal(
+      followed,
+      true,
+      'the user-layer follow toggle must apply the cached light background through the real service',
+    )
+    await mount4.fiber.dispose()
+    console.log('OK settings: namespace registers late on the real dsh-settings service and drives the follow pref')
+  }
 }
-assert.equal(
-  followed,
-  true,
-  'the user-layer follow toggle must apply the cached light background through the real service',
-)
-await mount4.fiber.dispose()
-console.log('OK settings: namespace registers late on the real dsh-settings service and drives the follow pref')
+
+// ── Phase 5: a real Loader drives a live config edit into the plugin ────────
+// On a ≥0.1.7 host a `/settings` edit is a loader-side volatile rewrite plus a
+// `loader/volatile-update` announcement that the plugin re-reads. Until this
+// phase existed that delivery was only asserted against a hand-rolled ctx whose
+// `on` merely recorded the listener for the test to call (REVIEW.md R-008) —
+// the real filtered dispatch and the loader's own `_commitVolatile` had never
+// run. Here the plugin is mounted as an entry of the host's own
+// @deepseek-ai/cordis-plugin-loader:
+//   * the loader resolves the Config through the plugin's schema, so the marked
+//     fields arrive as live refs (`cosmokit.volatile`);
+//   * `entry.update({ config })` takes the loader's volatile-only path
+//     (`_commitVolatile`: in-place ref rewrite + `fiber.ctx.emit(self, …)` with
+//     its `owner.fiber === fiber` filter);
+//   * the observable is the same end-to-end signal as phase 4 — the follow
+//     toggle flips theme.json to pink-day — plus the page policy landing on the
+//     plugin's own (now real, loader-minted) fiber.
+// A host without the loader package reports the gap instead of failing: the
+// point of the phase is to prove delivery, and silence would hide its absence.
+let loaderPath
+try {
+  loaderPath = hostRequire.resolve('@deepseek-ai/cordis-plugin-loader')
+} catch {
+  loaderPath = undefined
+}
+if (loaderPath === undefined || !existsSync(loaderPath)) {
+  console.log('* this host ships no @deepseek-ai/cordis-plugin-loader; the live-edit delivery phase is not runnable here')
+} else {
+  const sandbox5 = mkdtempSync(join(tmpdir(), 'pink-loader-live-'))
+  process.env.USERPROFILE = sandbox5
+  process.env.HOME = sandbox5
+  const dataDir5 = join(sandbox5, '.dsh-tui')
+  mkdirSync(dataDir5, { recursive: true })
+  writeFileSync(join(dataDir5, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+  writeFileSync(join(dataDir5, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }, null, 2))
+
+  const loaderModule = await import(pathToFileURL(loaderPath).href)
+  const Loader = loaderModule.Loader ?? loaderModule.default
+  const app5 = new Context()
+  await app5.plugin(Loader)
+
+  // The two services the plugin's card injects: a settings service shaped like
+  // the ≥0.1.7 one (no `register`, a per-instance page policy) and the section
+  // registry. The delivery under test is the loader's, not theirs.
+  const configuredPages = []
+  const cards = []
+  app5.provide('settings', {
+    configure: (presentation, owner) => {
+      configuredPages.push({ presentation, owner })
+      return () => {}
+    },
+    describe: () => [],
+    update: async () => {},
+    mutate: async () => {},
+  })
+  app5.provide('tuiSettingsSections', {
+    register: section => {
+      cards.push(section)
+      return () => {}
+    },
+  })
+
+  const entryId = await app5.loader.create({
+    id: SETTINGS_NAMESPACE,
+    name: pathToFileURL(join(pluginRoot, 'lib', 'types', 'index.js')).href,
+    config: { followSystem: false },
+  })
+  await app5.loader.await()
+  const entry = app5.loader.resolve(entryId)
+  assert.equal(entry.fiber?.state, 2, 'the plugin entry must be running under the real loader')
+  assert.equal(configuredPages.length, 1, 'the live-config wiring must attach exactly one page policy')
+  assert.equal(configuredPages[0].presentation.auto, false, 'the page policy opts out of the auto page')
+  assert.equal(
+    configuredPages[0].owner,
+    entry.fiber,
+    'the page policy must attach to the plugin’s own loader fiber, not to an injected child',
+  )
+  assert.equal(cards[0]?.ns, SETTINGS_NAMESPACE, 'the card namespace must follow the real Loader entry id')
+  assert.equal(
+    JSON.parse(readFileSync(join(dataDir5, 'theme.json'), 'utf8')).theme,
+    'pink-night',
+    'the follow toggle starts off, so nothing rewrites the pref yet',
+  )
+
+  // Exactly what the settings screen triggers: rewrite the row config and let
+  // the loader commit the volatile fields.
+  await entry.update({ config: { followSystem: true } })
+  const loaderDeadline = Date.now() + 5_000
+  let loaderFollowed = false
+  while (!loaderFollowed && Date.now() < loaderDeadline) {
+    try {
+      loaderFollowed = JSON.parse(readFileSync(join(dataDir5, 'theme.json'), 'utf8')).theme === 'pink-day'
+    } catch {
+      // Pref not written yet.
+    }
+    if (!loaderFollowed) await sleep(25)
+  }
+  assert.equal(
+    loaderFollowed,
+    true,
+    'a loader-driven volatile edit must reach the running plugin (loader/volatile-update delivery)',
+  )
+  await entry.fiber?.dispose()
+  console.log('OK loader: a real volatile config edit (in-place ref rewrite + filtered emit) reaches the plugin')
+}

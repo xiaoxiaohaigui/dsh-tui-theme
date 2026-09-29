@@ -7,7 +7,7 @@ This page holds the development details kept out of the README: environment, ins
 ## Environment
 
 - Node `^22.19 || >=24`, pure ESM; TypeScript compiles to `lib/types/`, and the build output is committed — CI fails if it drifts from a fresh build.
-- Host baseline: the devDependency pins `@deepseek-harness-tui/dsh-tui@0.10.1`; `dsh-settings` is still the older generation (≤ 0.1.6), so `verify:settings` skips itself by default in this repo.
+- Host baseline: the devDependency pins `@deepseek-harness-tui/dsh-tui@0.11.2` with the matching engine line at `0.2.0-rc.1`; the devDependency `dsh-settings` is the ≥ 0.1.7 Config-projection generation, so `verify:settings` really runs its projection assertions here (the legacy ≤ 0.1.6 path is covered by `verify.mjs` scenario 2 and by a manual `DSH_SETTINGS_DIR` run).
 
 ## Install prerequisites
 
@@ -23,14 +23,17 @@ npm install --include=dev
 npm run build            # tsc → lib/types
 npm run verify           # plugin contract, theme validation, editable-surface cross-check
 npm run verify:package   # release manifest (npm pack --dry-run)
-npm run verify:settings  # dsh-settings generation projection assertions (capability-probed; older generation skips with exit 0)
-npm run verify:host      # build + zero-config host verification (0.10.1)
-npm run release:check    # build + verify + verify:package + verify:settings
+npm run verify:peers     # peer-coverage contract (every validated runtime must be covered)
+npm run verify:settings  # dsh-settings generation projection assertions (capability-probed; the older generation reports a skip and exits 0)
+npm run verify:host      # build + zero-config host verification (0.11.2)
+npm run release:check    # build + verify + verify:package + verify:peers + verify:settings
 ```
+
+After touching `devDependencies` / `overrides`, delete `node_modules` and install fresh: the host tarball bundles `@dsh-std/*` manifests that still declare `workspace:*`, and an incremental install re-reads them and dies with `EUNSUPPORTEDPROTOCOL` (`--no-package-lock` does not help); a fresh resolution skips the bundled directories instead. The install itself writes a `package-lock.json` — this repo does not commit one, so delete it afterwards.
 
 ## Pointing at another host version
 
-`verify:host` uses the devDependency dsh-TUI (currently 0.10.1) for zero-config verification — no local host checkout needed. To verify an older release or a release baseline, point it at the matching host adapter and source; set `DSH_TUI_EXPECTED_VERSION` as well to pin the version:
+`verify:host` uses the devDependency dsh-TUI (currently 0.11.2) for zero-config verification — no local host checkout needed. To verify an older release or a release baseline, point it at the matching host adapter and source; set `DSH_TUI_EXPECTED_VERSION` as well to pin the version:
 
 ```sh
 DSH_TUI_ADAPTER_DIR=/path/to/dsh-TUI/lib/types/dsh-adapter \
@@ -39,13 +42,19 @@ DSH_TUI_EXPECTED_VERSION=0.9.3 \
 npm run verify:host
 ```
 
-`verify:settings` works the same way: with the older-generation `dsh-settings` in devDependencies the script reports that it skipped and exits 0; to actually verify the ≥ 0.1.7 Config projection, point `DSH_SETTINGS_DIR` at the real installation:
+Phase 4 of `runtime-themes-headless.mjs` (the real settings service) branches by capability: when the host's generation is ≤ 0.1.6 it mounts a real `SettingsProvider` and asserts the late namespace registration; on ≥ 0.1.7 it reports that this API no longer exists and points at `verify:settings` (instead of aborting the whole `verify:host` run with a `TypeError`). To exercise the legacy half, point `DSH_SETTINGS_DIR` at a ≤ 0.1.6 installation (for example a scratch `npm install @deepseek-ai/dsh-settings@0.1.5-rc.1`):
+
+```sh
+DSH_SETTINGS_DIR=/path/to/dsh-settings-0.1.5 npm run verify:host
+```
+
+`verify:settings` takes the same variable: with an older-generation `dsh-settings` in devDependencies the script reports that it skipped and exits 0; to verify the ≥ 0.1.7 Config projection, point `DSH_SETTINGS_DIR` at the real installation:
 
 ```sh
 DSH_SETTINGS_DIR="$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh-settings" npm run verify:settings
 ```
 
-CI only covers the 0.10.1 zero-config line; 0.9.x compatibility regressions still need a local run with the env vars above pointing at the matching host worktree.
+CI only covers the 0.11.2 zero-config line; 0.9.x compatibility regressions still need a local run with the env vars above pointing at the matching host worktree. The host baseline itself (devDependency vs CI's `DSH_TUI_EXPECTED_VERSION`) is guarded by `verify:peers`: it fails when the two disagree.
 
 ## CI gates
 
@@ -54,7 +63,7 @@ CI only covers the 0.10.1 zero-config line; 0.9.x compatibility regressions stil
 | Job | Contents |
 | --- | --- |
 | `contract` | Dependency-free, a few seconds: asserts `package-lock.json` is absent; runs `verify:package` |
-| `verify` | Full: `npm install --include=dev` → `build` → no `lib/` drift → `verify` → `verify:package` → `verify:settings` → `verify:host` |
+| `verify` | Full: `npm install --include=dev` → `build` → no `lib/` drift → `verify` → `verify:package` → `verify:peers` → `verify:settings` → `verify:host` |
 
 ## Changing the palette
 

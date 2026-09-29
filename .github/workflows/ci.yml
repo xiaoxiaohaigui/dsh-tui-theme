@@ -38,15 +38,16 @@ jobs:
           fi
       - run: node scripts/verify-package.mjs
 
-  # 完整验证档：零配置使用 devDependency 里钉住的 dsh-TUI（0.10.1），不需要
-  # 本地宿主源码检出。0.9.x 兼容回归仍留在发版前的本机门禁（REVIEW.md G4）。
+  # 完整验证档：零配置使用 devDependency 里钉住的 dsh-TUI（0.11.2）与同代
+  # 引擎包（0.2.0-rc.1），不需要本地宿主源码检出。0.9.x 兼容回归仍留在发版前的
+  # 本机门禁（REVIEW.md G4/R-011）。
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       # 该变量一旦存在值 production，npm 会静默省略 devDependencies（G2）。
       NODE_ENV: development
-      DSH_TUI_EXPECTED_VERSION: 0.10.1
+      DSH_TUI_EXPECTED_VERSION: 0.11.2
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -68,8 +69,11 @@ jobs:
         run: test -f lib/types/index.js
       - run: npm run verify
       - run: npm run verify:package
-      # 代际门禁：devDependency 里的 dsh-settings 仍是 ≤0.1.6，本档按能力探测
-      # 直接跳过并以 0 退出；基线一旦抬到 ≥0.1.7，它就真正跑 Config 投影断言。
+      # peer 契约门禁：dsh ≥0.2 的启动期校验会因一段 peer 落后而整层丢弃 bundle，
+      # 这条断言把「已验证的运行时版本必须被 peer 段覆盖」钉成常驻检查（R-011/R-013）。
+      - run: npm run verify:peers
+      # 代际门禁：devDependency 里的 dsh-settings 是 ≥0.1.7 的 Config 投影世代，
+      # 本档对真实包跑投影断言；旧代（≤0.1.6）路径由 verify.mjs 的场景 2 覆盖。
       - run: npm run verify:settings
       - run: npm run verify:host
 
