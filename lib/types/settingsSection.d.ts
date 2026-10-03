@@ -31,23 +31,20 @@
  * renders but never saves (≤0.1.6) or a `命名空间未注册` badge (≥0.1.7) — hence
  * the branch below warns instead of swallowing the failure.
  *
- * The section splits into two navigation groups (背景跟随 / 状态行). The two
- * text fields (glyph, separator) validate their drafts with parse(): an
- * invalid draft blocks the save, an empty draft clears back to the cordis
- * default. Both services are consumed through `ctx.inject`, not apply-time
- * `get` probes: this row may start before the host's service rows, and the
- * inject fires whenever each service actually registers.
+ * The card is the status line's own surface: 0.8 dropped the theme half of the
+ * plugin (the pink family is a dsh-TUI built-in now), so the section carries
+ * one navigation group (状态行) and nothing about palettes or background
+ * follow. The two text fields (glyph, separator) validate their drafts with
+ * parse(): an invalid draft blocks the save, an empty draft clears back to the
+ * cordis default. Both services are consumed through `ctx.inject`, not
+ * apply-time `get` probes: this row may start before the host's service rows,
+ * and the inject fires whenever each service actually registers.
  * @module dsh-tui-theme/settingsSection
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type { StatusOptions } from './statusLine.js';
 /** The plugin's settings document (every field optional at the user layer). */
-export type PinkSettingsDoc = StatusOptions & {
-    /** Install bundled theme JSONs on boot (cordis-config layer only). */
-    autoInstallThemes?: boolean;
-    /** Apply a cached terminal background: pink-day <-> pink-night. */
-    followSystem?: boolean;
-};
+export type PinkSettingsDoc = StatusOptions;
 /** The settings namespace this plugin owns by default, and the fallback when
  *  the Loader entry id is unusable. On ≥0.1.7 hosts the *entry id* is the
  *  namespace the host keys by, so the effective value is
@@ -71,9 +68,7 @@ export declare function resolveSettingsNamespace(ctx: Context): string;
 export interface PinkSettingsWiring {
     /** The cordis-config layer (the effective value format() falls back to for
      *  still-unset fields). */
-    readonly cordis: StatusOptions & {
-        followSystem?: boolean;
-    };
+    readonly cordis: StatusOptions;
     /** Current plain values of the plugin's own row config. On ≥0.1.7 hosts the
      *  loader rewrites the live refs in place, so calling this again after
      *  `loader/volatile-update` yields the edited values. */
@@ -94,8 +89,6 @@ export interface PinkSettingsWiring {
  *   ≥0.1.7 page policy and the volatile-update listener must attach to (their
  *   disposers ride the inject child, which is what a service reload recycles).
  * @param wiring - The value source and sink for the card.
- * @param dataDir - The host data directory (~/.dsh-tui), read by the
- *   followSystem field's format() to surface the cached follow state.
  */
-export declare function registerPinkSettings(ctx: Context, wiring: PinkSettingsWiring, dataDir?: string): void;
+export declare function registerPinkSettings(ctx: Context, wiring: PinkSettingsWiring): void;
 //# sourceMappingURL=settingsSection.d.ts.map

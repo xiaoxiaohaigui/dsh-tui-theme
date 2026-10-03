@@ -176,7 +176,6 @@ try {
   check('every live knob is served (no （未设置）)', unsetMissing.length === 0, unsetMissing.join(', '))
 
   const rowConfig = Config({
-    followSystem: true,
     statusGlyph: '❀',
     statusSeparator: '✦',
     showGlyph: true,
@@ -190,8 +189,7 @@ try {
     view.statusGlyph === '❀' &&
       view.statusSeparator === '✦' &&
       view.showClock === false &&
-      view.statusScope === 'all-themes' &&
-      view.followSystem === true,
+      view.statusScope === 'all-themes',
     JSON.stringify(view),
   )
 
@@ -251,16 +249,20 @@ try {
   }
 
   const live = { current: rowConfig }
-  registerPinkSettings(
-    ctx,
-    {
-      cordis: { statusGlyph: '✿', statusSeparator: '·', showGlyph: true, showClock: true, showTurns: true, statusScope: 'pink-only', statusEnabled: true, followSystem: false },
-      readLive: () => readConfigValues(live.current),
-      hasLiveFields: hasLiveConfigFields(Config),
-      onDoc: doc => applied.push(doc),
+  registerPinkSettings(ctx, {
+    cordis: {
+      statusGlyph: '✿',
+      statusSeparator: '·',
+      showGlyph: true,
+      showClock: true,
+      showTurns: true,
+      statusScope: 'pink-only',
+      statusEnabled: true,
     },
-    join(probeRoot, 'data'),
-  )
+    readLive: () => readConfigValues(live.current),
+    hasLiveFields: hasLiveConfigFields(Config),
+    onDoc: doc => applied.push(doc),
+  })
 
   check('the card takes the Loader entry id as its namespace', cards[0]?.ns === SETTINGS_NS, String(cards[0]?.ns))
   check('no namespace registration is attempted', typeof service.register === 'undefined')
@@ -276,7 +278,6 @@ try {
   check('a healthy ≥0.1.7 host logs no warning', warns.length === 0, warns.join(' | '))
 
   const edited = Config({
-    followSystem: false,
     statusGlyph: '🌸',
     statusSeparator: '·',
     showGlyph: false,
@@ -291,8 +292,7 @@ try {
     'a volatile update re-reads the edited config',
     applied.at(-1)?.statusGlyph === '🌸' &&
       applied.at(-1)?.showGlyph === false &&
-      applied.at(-1)?.showClock === true &&
-      applied.at(-1)?.followSystem === false,
+      applied.at(-1)?.showClock === true,
     JSON.stringify(applied.at(-1)),
   )
 } finally {

@@ -1,7 +1,7 @@
 {
   "name": "dsh-tui-theme",
-  "version": "0.7.3",
-  "description": "Sakura-pink themes for dsh-TUI with optional cached background follow (pink-day/pink-night), a blossom status line, and a /settings section. No shortcuts, no commands.",
+  "version": "0.8.0-pre.1",
+  "description": "Blossom status line and /settings section for dsh-TUI. The pink theme family (pink-night/pink-day/pink-ansi) is a dsh-TUI built-in since the upstream merge, so this package ships no themes, no shortcuts and no commands.",
   "type": "module",
   "main": "lib/types/index.js",
   "types": "lib/types/index.d.ts",
@@ -15,7 +15,6 @@
   },
   "files": [
     "lib",
-    "themes",
     "docs",
     "scripts",
     "cordis.patch.yml"
@@ -30,7 +29,7 @@
     "verify:package": "node scripts/verify-package.mjs",
     "verify:settings": "node scripts/verify-settings-generation.mjs",
     "verify:peers": "node scripts/verify-peer-coverage.mjs",
-    "verify:host": "npm run build && node scripts/headless-order-test.mjs && node scripts/runtime-themes-headless.mjs && node --import tsx/esm scripts/validate-themes-against-host.mjs",
+    "verify:host": "npm run build && node scripts/headless-order-test.mjs",
     "release:check": "npm run build && npm run verify && npm run verify:package && npm run verify:peers && npm run verify:settings",
     "prepack": "npm run release:check"
   },

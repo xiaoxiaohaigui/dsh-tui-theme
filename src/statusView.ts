@@ -2,9 +2,9 @@
  * Rich status view (dsh-TUI >= 0.10.1 seam: `tuiStatus.registerView`).
  *
  * A compact one-row host React component that renders the blossom line with
- * colors taken from the active pink palette — the one thing the scalar
- * `tuiStatus.set` path can never do (the host renders set() text uncolored +
- * terminal dim).
+ * colors taken from the pink family palette embedded in palette.ts — the one
+ * thing the scalar `tuiStatus.set` path can never do (the host renders set()
+ * text uncolored + terminal dim).
  *
  * Data channel: the component subscribes to a tiny plugin-side external
  * store via the host React's useSyncExternalStore, exactly the "owns its

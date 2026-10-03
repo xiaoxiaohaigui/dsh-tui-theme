@@ -20,7 +20,6 @@ export const SETTINGS_NAMESPACE = JSON.parse(
 
 /** [path, kind] pairs; compare as a set, never positionally. */
 export const SETTINGS_FIELDS = [
-  [['followSystem'], 'boolean'],
   [['showGlyph'], 'boolean'],
   [['showClock'], 'boolean'],
   [['showTurns'], 'boolean'],
@@ -34,7 +33,7 @@ export const STATUS_SCOPE_FIELD_PATH = ['statusScope']
 export const STATUS_SCOPE_OPTIONS = ['pink-only', 'all-themes']
 
 /** Navigation group ids; every field must name one of them. */
-export const SETTINGS_GROUPS = ['follow', 'status-line']
+export const SETTINGS_GROUPS = ['status-line']
 
 /** Assert a section object (ns + groups + fields) matches the contract. */
 export function assertSettingsContract(assert, section) {

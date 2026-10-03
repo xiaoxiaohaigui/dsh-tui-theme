@@ -2,9 +2,9 @@
  * Toast relay for the plugin-facing transient-notification seam
  * (dsh-TUI 0.10: `ctx.tuiToast`).
  *
- * The plugin's own logger output is invisible to a TUI user, so the few
- * events worth surfacing — a follow-system pref write, a repaired theme
- * file, a shadowing legacy static install — go through the host's toast
+ * The plugin's own logger output is invisible to a TUI user, so the one event
+ * still worth surfacing — the migration notice for theme files a ≤0.7.x
+ * install left behind (legacyNotice.ts) — goes through the host's toast
  * surface instead. Sending is fire-and-forget: hosts without the seam
  * (dsh-TUI < 0.10) never fire the inject and every send is a silent no-op,
  * exactly like the other soft-probed seams.

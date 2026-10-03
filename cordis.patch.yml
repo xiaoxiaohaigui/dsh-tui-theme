@@ -1,15 +1,13 @@
 # Bundle patch for dsh-tui-theme: insert the plugin as a profile row.
-# The plugin only consumes optional seams (themes dir, tuiStatus,
-# tuiSettingsSections, settings) and never registers shortcuts or commands.
-# followSystem stays off until dsh-TUI exposes a plugin-safe terminal query.
-# Existing caches can still be applied when users explicitly enable it.
+# The plugin only consumes optional seams (tuiStatus, tuiSettingsSections,
+# settings, tuiToast) and never registers shortcuts or commands. Since 0.8 it
+# ships no themes at all: the pink family is a dsh-TUI built-in, and the plugin
+# only reads ~/.dsh-tui/theme.json to decide whether the blossom line shows.
 - insert:
     - id: dsh-tui-theme
       name: 'dsh-tui-theme'
       config:
-        autoInstallThemes: true
         statusEnabled: true
-        followSystem: false
         statusGlyph: '✿'
         statusSeparator: '·'
         showGlyph: true

@@ -1,18 +1,22 @@
 /**
  * Hermetic verification for dsh-tui-theme (no TTY, no real HOME).
  *
- * Points HOME/USERPROFILE at a throwaway sandbox BEFORE importing anything
- * (the same technique the host's scripts/verify-themes.mjs uses), then:
+ * 0.8 scope: the package ships no themes any more. The pink family
+ * (pink-night / pink-day / pink-ansi) is a dsh-TUI built-in since the upstream
+ * merge, so this plugin keeps only the blossom status line, the /settings card
+ * and the one-shot toast about leftover ≤0.7.x theme files. Beyond the features
+ * themselves the suite pins the two invariants the handover depends on:
  *
- *  1. Applies the plugin against a stub context with every seam absent —
- *     must be a silent no-op (the #183 discipline).
- *  2. Applies it with all seams faked — asserts themes land in the SANDBOX
- *     ~/.dsh-tui/themes/, the status line renders (glyph · clock · turns),
- *     settings edits land live, and the /settings section is declared.
- *  3. Re-runs installation — must skip, never overwrite, existing files
- *     (including a user-edited same-named file).
- *  4. Applies with autoInstallThemes: false on a clean sandbox — must not
- *     create the themes directory.
+ *  1. the plugin never writes into the host's data directory — the single
+ *     exception is the migration-notice marker, written once, only when a
+ *     legacy pink-* file is actually there (scenarios 12 and 17);
+ *  2. it never registers a theme, installs a theme file, or repairs one, even
+ *     when a runtime theme service is present (scenario 17).
+ *
+ * Points HOME/USERPROFILE at a throwaway sandbox BEFORE importing anything
+ * (the same technique the host's scripts/verify-themes.mjs uses), then walks
+ * the seams the plugin still consumes: tuiStatus (scalar and rich paths),
+ * tuiSettingsSections + settings (both dsh-settings generations), tuiToast.
  *
  * Run with: npm run verify   (after npm run build)
  */
@@ -24,7 +28,7 @@ import { createRequire, syncBuiltinESMExports } from 'node:module'
 import assert from 'node:assert/strict'
 import { assertSettingsContract, SETTINGS_FIELDS } from './expected-settings-contract.mjs'
 
-const sandboxHome = mkdtempSync(join(tmpdir(), 'pink-theme-verify-'))
+const sandboxHome = mkdtempSync(join(tmpdir(), 'pink-status-verify-'))
 const originalThemeOverride = process.env.DSH_TUI_THEME
 const restoreThemeOverride = () => {
   if (originalThemeOverride === undefined) {
@@ -41,22 +45,18 @@ process.env.HOME = sandboxHome
 const pluginRoot = fileURLToPath(new URL('..', import.meta.url))
 const require = createRequire(import.meta.url)
 const builtinFs = require('node:fs')
-const sandboxThemes = join(sandboxHome, '.dsh-tui', 'themes')
+const sandboxData = join(sandboxHome, '.dsh-tui')
+const sandboxThemes = join(sandboxData, 'themes')
+const NOTICE_FILE = 'theme-plugin-notice.json'
 
 const { name, apply, Config } = await import('../lib/types/index.js')
 const { LIVE_CONFIG_KEYS, hasLiveConfigFields, readConfigValues } = await import('../lib/types/liveConfig.js')
 const { resolveSettingsNamespace, SETTINGS_NS } = await import('../lib/types/settingsSection.js')
-const { installBundledThemes, readBundledThemes, findShadowedBundledThemes } = await import('../lib/types/themeAssets.js')
 const { startStatusLine, invalidateThemePrefCacheForTests } = await import('../lib/types/statusLine.js')
 const { setToastRetryDelaysForTests } = await import('../lib/types/toast.js')
-const {
-  themeForBackground,
-  readThemePref,
-  writeThemePref,
-  readFollowCache,
-  applyCachedFollow,
-  runFollowSystem,
-} = await import('../lib/types/autoTheme.js')
+const { readThemePref } = await import('../lib/types/themePref.js')
+const { statusColorsFor } = await import('../lib/types/palette.js')
+const { findLegacyThemeFiles } = await import('../lib/types/legacyNotice.js')
 
 assert.equal(name, 'dsh-tui-theme')
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -65,23 +65,26 @@ const applyAndSettle = async (ctx, config) => {
   await settle()
 }
 
+/** The host's persisted theme preference, written the way the host writes it. */
+const setActiveTheme = theme => {
+  mkdirSync(sandboxData, { recursive: true })
+  if (theme === undefined) rmSync(join(sandboxData, 'theme.json'), { force: true })
+  else writeFileSync(join(sandboxData, 'theme.json'), JSON.stringify({ theme }, null, 2))
+  invalidateThemePrefCacheForTests()
+}
+
 /** A stub Cordis-like context; every seam optional and recorded. */
-function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs, entryId, deferThemes = false, deferToast = false, deferDialogs = false } = {}) {
-  const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], themeRegisters: [], warnings: [], infos: [], children: {}, injectRequests: new Map() }
-  let availableThemes = themes
+function makeStubCtx({ status, sections, settingsService, themes, toast, entryId, deferToast = false } = {}) {
+  const record = { handlers: new Map(), disposers: [], statusCalls: [], sectionsCalls: [], registerCalls: [], watchers: [], warnings: [], infos: [], children: {}, injectRequests: new Map() }
   let availableToast = toast
-  let availableDialogs = dialogs
-  const deferredThemeCallbacks = []
   const deferredToastCallbacks = []
-  const deferredDialogsCallbacks = []
   const logger = { info: msg => record.infos.push(String(msg)), warn: msg => record.warnings.push(String(msg)), error: () => {} }
   const serviceFor = dep => ({
     settings: settingsService,
     tuiStatus: status,
     tuiSettingsSections: sections,
-    tuiThemes: availableThemes,
+    tuiThemes: themes,
     tuiToast: availableToast,
-    tuiDialogs: availableDialogs,
   })[dep]
   const base = {
     logger,
@@ -91,9 +94,8 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs
     get(serviceName) {
       if (serviceName === 'tuiStatus') return status
       if (serviceName === 'tuiSettingsSections') return sections
-      if (serviceName === 'tuiThemes') return availableThemes
+      if (serviceName === 'tuiThemes') return themes
       if (serviceName === 'tuiToast') return availableToast
-      if (serviceName === 'tuiDialogs') return availableDialogs
       return undefined
     },
     on(event, handler) {
@@ -118,24 +120,11 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs
       const key = deps.join('+')
       const props = () => Object.fromEntries(deps.map(dep => [dep, serviceFor(dep)]))
       const run = () => callback(childCtx(props(), key))
-      // A deferred body becomes replayable when it actually runs for the first
-      // time, never while its service is still missing.
-      const defer = queue => {
-        queue.push(() => {
+      if (deferToast && availableToast === undefined && deps.includes('tuiToast')) {
+        deferredToastCallbacks.push(() => {
           record.injectRequests.set(key, run)
           run()
         })
-      }
-      if (deferThemes && availableThemes === undefined && deps.includes('tuiThemes')) {
-        defer(deferredThemeCallbacks)
-        return
-      }
-      if (deferToast && availableToast === undefined && deps.includes('tuiToast')) {
-        defer(deferredToastCallbacks)
-        return
-      }
-      if (deferDialogs && availableDialogs === undefined && deps.includes('tuiDialogs')) {
-        defer(deferredDialogsCallbacks)
         return
       }
       if (deps.every(dep => serviceFor(dep) !== undefined)) {
@@ -176,17 +165,9 @@ function makeStubCtx({ status, sections, settingsService, themes, toast, dialogs
     for (const child of (record.children[key] ?? []).splice(0)) child.dispose()
     replay()
   }
-  record.activateThemes = service => {
-    availableThemes = service
-    for (const run of deferredThemeCallbacks.splice(0)) run()
-  }
   record.activateToast = service => {
     availableToast = service
     for (const run of deferredToastCallbacks.splice(0)) run()
-  }
-  record.activateDialogs = service => {
-    availableDialogs = service
-    for (const run of deferredDialogsCallbacks.splice(0)) run()
   }
   return { ctx: base, record }
 }
@@ -208,18 +189,17 @@ const fakeRichStatus = (calls, viewCalls, { refuse = false, throws = false } = {
   },
 })
 const fakeSections = calls => ({ register(section) { calls.push(section); return () => {} } })
-const fakeThemes = (record, { throws = false } = {}) => ({
+/** A runtime theme service, present so the "never registers" invariant bites. */
+const fakeThemes = registers => ({
   register(descriptor, identity) {
-    record.themeRegisters.push([descriptor, identity])
-    if (throws) throw new Error('runtime registry unavailable')
+    registers.push([descriptor, identity])
     return () => {}
   },
 })
 const fakeSettingsService = (record, doc) => ({
   register(namespace, schema) {
     // Called as a method, never as a detached reference: the real provider's
-    // register() reads its own state, so losing `this` throws there — the bug
-    // runtime-themes-headless phase 4 caught against the real service. ESM is
+    // register() reads its own state, so losing `this` throws there. ESM is
     // strict, so a detached call sees `this === undefined`.
     if (this === undefined) throw new Error('register() lost its receiver')
     record.registerCalls.push([namespace, schema])
@@ -244,9 +224,9 @@ const fakeConfigSettingsService = record => ({
   },
 })
 /** The cosmokit Volatile protocol: a frozen branded ref whose value the loader
- *  rewrites (`Symbol.for('cosmokit.volatile.write')` — the probe
- *  readConfigValues reads; `extra` models a ref carrying more than `get`).
- *  `read` is a thunk so a scenario can model the in-place rewrite. */
+ *  rewrites (`Symbol.for('cosmokit.volatile.write')`; `extra` models a ref
+ *  carrying more than `get`). `read` is a thunk so a scenario can model the
+ *  in-place rewrite. */
 const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
 const liveRef = (read, extra) => Object.freeze({ get: read, [VOLATILE_WRITE]: () => {}, ...extra })
 /** Records delivered toasts; the first `dropFirst` shows are dropped (no sink yet). */
@@ -261,42 +241,31 @@ const fakeToast = (deliveries, { dropFirst = 0 } = {}) => {
     },
   }
 }
-/**
- * A tuiDialogs stub: records confirm requests, answers them from the test
- * via the returned queue (each entry resolves one dialog).
- */
-const fakeDialogs = (requests, answers) => ({
-  confirm(owner, request) {
-    requests.push({ owner, request })
-    return new Promise(resolve => {
-      answers.push(resolve)
-    })
-  },
-})
 
 const emit = (record, event, ...args) => {
   for (const handler of record.handlers.get(event) ?? []) handler(...args)
 }
+/** Wait for a delivery that a retry chain owes us. */
+const waitFor = async predicate => {
+  const deadline = Date.now() + 2_000
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
 
-// ── 1. bare host: no seam present → theme assets still install (pure fs),
-//        but nothing UI-facing happens ────────────────────────────────────────
+// ── 1. bare host: no seam present → nothing happens, nothing is written ─────
 {
   const { ctx, record } = makeStubCtx()
   apply(ctx)
   assert.deepEqual(record.warnings, [])
   assert.equal(record.handlers.size, 0, 'no event handlers without the status seam')
-  for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
-    assert.equal(existsSync(join(sandboxThemes, `${theme}.json`)), true, `${theme}.json installed`)
-  }
-  console.log('✓ bare host (no seams): themes installed, nothing UI-facing')
+  assert.deepEqual(readdirSync(sandboxHome), [], 'a seam-less host must not be touched at all')
+  console.log('✓ bare host (no seams): silent no-op, not a single file written')
 }
 
-// ── 2. full host: everything wired ──────────────────────────────────────────
+// ── 2. full host: status line, settings card and the ≤0.1.6 namespace ───────
 {
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  // A pink theme is active — the default policy hides the line otherwise.
-  mkdirSync(join(sandboxHome, '.dsh-tui'), { recursive: true })
-  writeFileSync(join(sandboxHome, '.dsh-tui', 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+  setActiveTheme('pink-night')
   const statusCalls = []
   const sectionsCalls = []
   const settingsRecord = { registerCalls: [], watchers: [] }
@@ -306,11 +275,6 @@ const emit = (record, event, ...args) => {
     settingsService: fakeSettingsService(settingsRecord, {}),
   })
   await applyAndSettle(ctx)
-
-  // Themes installed into the SANDBOX, never the real home.
-  for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
-    assert.equal(existsSync(join(sandboxThemes, `${theme}.json`)), true, `${theme}.json installed`)
-  }
 
   // Status line: one keyed contribution with glyph · clock.
   assert.equal(statusCalls.length > 0, true)
@@ -322,18 +286,17 @@ const emit = (record, event, ...args) => {
   const session = { id: 's1' }
   emit(record, 'session/event', session, { type: 'turn/end' })
   emit(record, 'session/event', session, { type: 'turn/end' })
-  const latest = statusCalls.at(-1)[1]
-  assert.match(latest, /^✿ · \d{2}:\d{2} · 2✦$/)
+  assert.match(statusCalls.at(-1)[1], /^✿ · \d{2}:\d{2} · 2✦$/)
 
   // Settings namespace registered and the section declaration remains within
   // the shared host form contract.
   assert.equal(settingsRecord.registerCalls.length, 1)
   // The registration schema is the ≤0.1.6 host's only field list, and it is
   // hand-written (settingsSection.registerNamespaceScope) — the one place the
-  // card's seven keys are not derived from LIVE_CONFIG_KEYS. Set equality keeps
-  // the "one editable surface" invariant true across both generations: a key
-  // added to LIVE_CONFIG_KEYS alone would render and save on a ≥0.1.7 card and
-  // be silently unpersistable on an old host.
+  // card's keys are not derived from LIVE_CONFIG_KEYS. Set equality keeps the
+  // "one editable surface" invariant true across both generations: a key added
+  // to LIVE_CONFIG_KEYS alone would render and save on a ≥0.1.7 card and be
+  // silently unpersistable on an old host.
   assert.deepEqual(
     Object.keys(settingsRecord.registerCalls[0][1].dict).sort(),
     [...LIVE_CONFIG_KEYS].sort(),
@@ -349,64 +312,16 @@ const emit = (record, event, ...args) => {
   emit(record, 'session/event', session, { type: 'turn/end' })
   assert.match(statusCalls.at(-1)[1], /^3✦$/)
 
+  // The plugin never wrote into the host's data directory: the pref the test
+  // planted is still the only file there.
+  assert.deepEqual(readdirSync(sandboxData), ['theme.json'], 'no theme file, no marker, no cache')
+
   // Disposal never throws.
   for (const dispose of record.disposers) dispose()
-  console.log('✓ full host: themes installed, status line live, settings wired')
+  console.log('✓ full host: status line live, settings wired, nothing written')
 }
 
-// ── 2a. runtime themes: service owns palettes and static files stay absent ───
-{
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  const registrations = []
-  const themes = { register(descriptor, identity) { registrations.push([descriptor, identity]); return () => {} } }
-  const { ctx } = makeStubCtx({ themes })
-  await applyAndSettle(ctx)
-  assert.equal(existsSync(sandboxThemes), false, 'runtime registration must not create static files')
-  const expected = readBundledThemes().map(({ file, ...theme }) => theme)
-  assert.deepEqual(registrations.map(([descriptor]) => descriptor), expected)
-  assert.equal(
-    registrations.every(([, identity]) => identity?.tuiThemes !== undefined),
-    true,
-    'runtime registrations use the inject-scoped identity',
-  )
-  console.log('✓ runtime themes: three descriptors registered without static files')
-}
-
-// ── 2b. late runtime service: confirmation removes this activation's files ──
-{
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  const { ctx, record } = makeStubCtx({ deferThemes: true })
-  apply(ctx)
-  assert.equal(existsSync(sandboxThemes), true, 'legacy fallback must install synchronously before service arrival')
-  record.activateThemes(fakeThemes(record))
-  await settle()
-  assert.equal(existsSync(sandboxThemes), false, 'late runtime service must remove all fallback files and the empty directory')
-
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  const protectedContext = makeStubCtx({ deferThemes: true })
-  apply(protectedContext.ctx)
-  assert.equal(existsSync(sandboxThemes), true, 'legacy fallback must install before protecting a user edit')
-  const protectedTheme = join(sandboxThemes, 'pink-night.json')
-  writeFileSync(protectedTheme, '{ "name": "pink-night", "colors": { "text": "#123456" } }')
-  protectedContext.record.activateThemes(fakeThemes(protectedContext.record))
-  await settle()
-  assert.equal(existsSync(join(sandboxThemes, 'pink-day.json')), false, 'late runtime service must remove plugin-owned files')
-  assert.equal(existsSync(join(sandboxThemes, 'pink-ansi.json')), false, 'late runtime service must remove plugin-owned files')
-  assert.equal(readFileSync(protectedTheme, 'utf8'), '{ "name": "pink-night", "colors": { "text": "#123456" } }')
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  console.log('✓ runtime race: late service wins and removes static fallback files')
-}
-
-// ── 2c. hostile runtime service: registration failures degrade to warnings ───
-{
-  const themeRecord = { themeRegisters: [] }
-  const { ctx, record } = makeStubCtx({ themes: fakeThemes(themeRecord, { throws: true }) })
-  await applyAndSettle(ctx)
-  assert.equal(record.warnings.length, 3, 'each hostile registration is contained and warned')
-  console.log('✓ hostile runtime service: registration failures warn, never propagate')
-}
-
-// ── 2d. live-config marking: the card and the marked Config keys are one set ─
+// ── 3. live-config marking: the card and the marked Config keys are one set ─
 {
   // The marker is what a ≥0.1.7 host projects (`volatileForm`), and the card's
   // field paths are what it serves; set equality both ways is the invariant
@@ -419,9 +334,9 @@ const emit = (record, event, ...args) => {
   for (const key of LIVE_CONFIG_KEYS) {
     assert.equal(dict[key]?.meta?.volatile, true, `${key} must be marked live`)
   }
-  for (const key of ['autoInstallThemes', 'statusEnabled']) {
-    assert.equal(dict[key]?.meta?.volatile, undefined, `${key} stays a cordis-only knob`)
-  }
+  assert.equal(dict.statusEnabled?.meta?.volatile, undefined, 'statusEnabled stays a cordis-only knob')
+  assert.equal(dict.autoInstallThemes, undefined, 'the theme knobs are gone, not merely unmarked')
+  assert.equal(dict.followSystem, undefined, 'the follow knob is gone with the theme half')
   assert.deepEqual(
     SETTINGS_FIELDS.map(([path]) => path.join('.')).sort(),
     [...LIVE_CONFIG_KEYS].sort(),
@@ -448,15 +363,12 @@ const emit = (record, event, ...args) => {
   assert.equal(resolveSettingsNamespace(withEntry('custom-theme')), 'custom-theme')
   assert.equal(resolveSettingsNamespace(withEntry('Custom.TUI')), SETTINGS_NS)
   assert.equal(resolveSettingsNamespace({}), SETTINGS_NS)
-  console.log('✓ live config: 3.18.2 meta marking, card↔key parity, ref unwrapping, namespace fallback')
+  console.log('✓ live config: meta marking, card↔key parity, ref unwrapping, namespace fallback')
 }
 
-// ── 2e. dsh-settings ≥0.1.7: the card is fed by the live Config ─────────────
+// ── 4. dsh-settings ≥0.1.7: the card is fed by the live Config ─────────────
 {
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  mkdirSync(join(sandboxHome, '.dsh-tui'), { recursive: true })
-  writeFileSync(join(sandboxHome, '.dsh-tui', 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
-  invalidateThemePrefCacheForTests()
+  setActiveTheme('pink-night')
   const statusCalls = []
   const sectionsCalls = []
   const settingsRecord = { registerCalls: [], configureCalls: [] }
@@ -468,13 +380,11 @@ const emit = (record, event, ...args) => {
   })
   // Apply-time shape of a ≥0.1.7 host: the marked fields arrive as live refs
   // (one of them carrying an extra key — the shape the brand probe exists
-  // for), the two cordis-only knobs as plain values. The thunks model the
-  // loader's in-place rewrite.
+  // for), the cordis-only knob as a plain value. The thunks model the loader's
+  // in-place rewrite.
   const live = { glyph: '❀', clock: false }
   await applyAndSettle(ctx, {
-    autoInstallThemes: true,
     statusEnabled: true,
-    followSystem: false,
     statusGlyph: liveRef(() => live.glyph, { id: 'live-1' }),
     statusSeparator: '·',
     showGlyph: liveRef(() => true),
@@ -511,11 +421,10 @@ const emit = (record, event, ...args) => {
   assert.match(statusCalls.at(-1)[1], /^❀ · \d{2}:\d{2}$/, 'a volatile update re-reads the edited config')
 
   for (const dispose of record.disposers) dispose()
-  rmSync(sandboxThemes, { recursive: true, force: true })
   console.log('✓ settings ≥0.1.7: Config-derived card on the plugin fiber, live refs unwrapped, volatile update re-read')
 }
 
-// ── 2f. ≥0.1.7 degradation is diagnosed, never a bare badge ─────────────────
+// ── 5. ≥0.1.7 degradation is diagnosed, never a bare badge ─────────────────
 {
   // A settings service with neither surface (an unrecognized generation): one
   // info line, and the card still registers.
@@ -551,12 +460,10 @@ const emit = (record, event, ...args) => {
     'the entry-id mismatch is warned about',
   )
   assert.equal(fallbackRecord.configureCalls.length, 1, 'the page policy is still attempted')
-  // Leave the sandbox as scenario 2b did: a fresh themes dir for scenario 3.
-  rmSync(sandboxThemes, { recursive: true, force: true })
   console.log('✓ settings degradation: missing surface and unusable entry id are diagnosed')
 }
 
-// ── 2g. settings service reload: the volatile listener is never stacked ─────
+// ── 6. settings service reload: the volatile listener is never stacked ─────
 {
   // `ctx.inject()` runs its body in a fiber cordis recycles when the service
   // arrives again (a settings reload, an isolate/plugin restart). The listener
@@ -564,10 +471,7 @@ const emit = (record, event, ...args) => {
   // delivers `loader/volatile-update` — but a disposer owned there survives the
   // recycling and lets the second pass add a second listener, so every later
   // event re-reads the config twice.
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  mkdirSync(join(sandboxHome, '.dsh-tui'), { recursive: true })
-  writeFileSync(join(sandboxHome, '.dsh-tui', 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
-  invalidateThemePrefCacheForTests()
+  setActiveTheme('pink-night')
   const settingsRecord = { registerCalls: [], configureCalls: [] }
   const { ctx, record } = makeStubCtx({
     status: fakeStatus([]),
@@ -576,9 +480,7 @@ const emit = (record, event, ...args) => {
   })
   let glyphReads = 0
   await applyAndSettle(ctx, {
-    autoInstallThemes: true,
     statusEnabled: true,
-    followSystem: false,
     statusGlyph: liveRef(() => { glyphReads += 1; return '✿' }),
     statusSeparator: '·',
     showGlyph: liveRef(() => true),
@@ -596,79 +498,10 @@ const emit = (record, event, ...args) => {
   assert.equal(glyphReads - before, 1, 'one event must drive exactly one re-read')
 
   for (const dispose of record.disposers) dispose()
-  rmSync(sandboxThemes, { recursive: true, force: true })
   console.log('✓ settings reload: the inject child is recycled, the volatile listener is not duplicated')
 }
 
-// ── 3. idempotence + user-file protection ───────────────────────────────────
-{
-  const seeded = installBundledThemes()
-  assert.equal(seeded.installed.length, 3)
-  const again = installBundledThemes()
-  assert.deepEqual(again.installed, [])
-  assert.deepEqual(again.repaired, [])
-  assert.equal(again.skipped.length, 3)
-
-  // A user-edited same-named file must survive reinstallation.
-  const userFile = join(sandboxThemes, 'pink-night.json')
-  writeFileSync(userFile, '{ "name": "pink-night", "base": "dark", "colors": { "text": "#123456" } }')
-  const third = installBundledThemes()
-  assert.deepEqual(third.installed, [])
-  assert.equal(JSON.parse(readFileSync(userFile, 'utf8')).colors.text, '#123456')
-  console.log('✓ reinstall: skips existing files, never overwrites user edits')
-}
-
-// ── 4. autoInstallThemes: false on a clean sandbox ──────────────────────────
-{
-  rmSync(sandboxHome, { recursive: true, force: true })
-  mkdirSync(sandboxHome, { recursive: true })
-  const { ctx } = makeStubCtx()
-  await applyAndSettle(ctx, { autoInstallThemes: false })
-  assert.equal(existsSync(join(sandboxHome, '.dsh-tui')), false, 'must not create the dir when disabled')
-  console.log('✓ autoInstallThemes=false: leaves the themes dir untouched')
-}
-
-// ── 5. cached background follow: no terminal I/O ───────────────────────────
-{
-  const dataDir = join(sandboxHome, '.dsh-tui')
-  mkdirSync(dataDir, { recursive: true })
-  assert.equal(themeForBackground(true), 'pink-day')
-  assert.equal(themeForBackground(false), 'pink-night')
-  assert.equal(applyCachedFollow(dataDir), undefined, 'no cache preserves the existing choice')
-
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
-  assert.equal(applyCachedFollow(dataDir), 'pink-day')
-  assert.equal(readFollowCache(dataDir).light, true)
-  assert.equal(readThemePref(dataDir), 'pink-day')
-
-  // Same value -> no rewrite churn (mtime-agnostic: pref already matches).
-  assert.equal(applyCachedFollow(dataDir), 'pink-day')
-
-  // The follow runner only applies cache and reports its structured outcome.
-  // It accepts no stdin/stdout handles and cannot create a raw-mode lease or
-  // input listener.
-  const reports = []
-  runFollowSystem(dataDir, () => true, outcome => reports.push(outcome))
-  assert.deepEqual(reports, [{ kind: 'applied', theme: 'pink-day', changed: false }])
-
-  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
-  runFollowSystem(dataDir, () => false, outcome => reports.push(outcome))
-  assert.equal(readThemePref(dataDir), 'dark', 'inactive follow preserves manual choice')
-
-  runFollowSystem(dataDir, () => true, outcome => reports.push(outcome))
-  assert.deepEqual(
-    reports.at(-1),
-    { kind: 'applied', theme: 'pink-day', changed: true },
-    'a real pref flip is reported as changed',
-  )
-
-  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
-  runFollowSystem(dataDir, () => true, outcome => reports.push(outcome))
-  assert.deepEqual(reports.at(-1), { kind: 'unavailable' })
-  console.log('✓ follow: cached background applies without terminal I/O')
-}
-
-// ── 6. statusEnabled: false silences the whole line ─────────────────────────
+// ── 7. statusEnabled: false silences the whole line ────────────────────────
 {
   const statusCalls = []
   const { ctx } = makeStubCtx({ status: fakeStatus(statusCalls) })
@@ -679,36 +512,9 @@ const emit = (record, event, ...args) => {
   console.log('✓ statusEnabled=false: the line contributes nothing')
 }
 
-// ── 7. followSystem honors the /settings user layer with cached state ───────
+// ── 8. theme gating: the line belongs to the built-in pink palettes ────────
 {
-  const dataDir = join(sandboxHome, '.dsh-tui')
-  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
-  rmSync(join(dataDir, 'theme.json'), { force: true })
-  const settingsRecord = { registerCalls: [], watchers: [] }
-  const { ctx } = makeStubCtx({
-    status: fakeStatus([]),
-    sections: fakeSections([]),
-    settingsService: fakeSettingsService(settingsRecord, {}),
-  })
-  await applyAndSettle(ctx, { followSystem: true })
-  // Cordis layer on, empty user layer, no cache yet -> no pref churn.
-  assert.equal(existsSync(join(dataDir, 'theme.json')), false)
-
-  // User disables follow via /settings; a stale cached flip must not write.
-  for (const w of settingsRecord.watchers) w({ followSystem: false })
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
-  assert.equal(existsSync(join(dataDir, 'theme.json')), false, 'disabled follow must not rewrite the pref')
-
-  // Re-enable → the cached background applies immediately.
-  for (const w of settingsRecord.watchers) w({ followSystem: true })
-  assert.equal(readThemePref(dataDir), 'pink-day')
-  console.log('✓ followSystem: /settings toggle decides live (off = pref preserved)')
-}
-
-// ── 8. theme gating: the line belongs to the pink palettes ──────────────────
-{
-  const themePrefPath = join(sandboxHome, '.dsh-tui', 'theme.json')
-  writeFileSync(themePrefPath, JSON.stringify({ theme: 'pink-night' }, null, 2))
+  setActiveTheme('pink-night')
   const statusCalls = []
   const settingsRecord = { registerCalls: [], watchers: [] }
   const { ctx, record } = makeStubCtx({
@@ -724,8 +530,7 @@ const emit = (record, event, ...args) => {
 
   // Non-pink theme active → hidden by default. The pref cache is dropped so
   // the rewrite is visible immediately (production invalidation is the TTL).
-  writeFileSync(themePrefPath, JSON.stringify({ theme: 'dark' }, null, 2))
-  invalidateThemePrefCacheForTests()
+  setActiveTheme('dark')
   emit(record, 'session/event', session, { type: 'turn/end' })
   assert.equal(statusCalls.at(-1)[1], undefined)
 
@@ -749,7 +554,15 @@ const emit = (record, event, ...args) => {
       process.env.DSH_TUI_THEME = baselineThemeOverride
     }
   }
-  console.log('✓ theme gating: pink-only by default, opt-in shows everywhere')
+
+  // Every pink built-in name is in scope, not just the two the plugin used to
+  // install: the family is the host's now.
+  const colors = name => statusColorsFor(name)
+  assert.notEqual(colors('pink-ansi').glyph, undefined)
+  assert.equal(colors('dark').glyph, undefined, 'non-pink palettes stay uncolored')
+  assert.equal(colors(undefined).glyph, undefined)
+  assert.equal(colors('auto').glyph, undefined)
+  console.log('✓ theme gating: pink-only by default, opt-in shows everywhere, host precedence honored')
 }
 
 // ── 9. settings service hostility: registration throws → warn, never crash ─
@@ -764,202 +577,7 @@ const emit = (record, event, ...args) => {
   console.log('✓ hostile settings service: registration failure warns, never propagates')
 }
 
-// ── 10. missing settings: never override a manual theme choice ─────────────
-{
-  const dataDir = join(sandboxHome, '.dsh-tui')
-  mkdirSync(dataDir, { recursive: true })
-  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
-  const { ctx } = makeStubCtx()
-  await applyAndSettle(ctx, { followSystem: true })
-  assert.equal(readThemePref(dataDir), 'dark', 'without settings, cached follow must not override manual choice')
-  console.log('✓ missing settings: cached follow leaves the manual choice intact')
-}
-
-// ── 11. filesystem commits: atomic replacement and exclusive creation ───────
-{
-  const dataDir = join(sandboxHome, '.dsh-tui')
-  mkdirSync(dataDir, { recursive: true })
-  const pref = join(dataDir, 'theme.json')
-  writeFileSync(pref, JSON.stringify({ theme: 'dark' }, null, 2))
-  const originalRename = builtinFs.renameSync
-  try {
-    builtinFs.renameSync = () => { throw new Error('rename blocked') }
-    syncBuiltinESMExports()
-    assert.equal(writeThemePref('pink-day', dataDir), false)
-    assert.equal(readThemePref(dataDir), 'dark', 'failed commit leaves the prior JSON readable')
-    assert.equal(
-      readdirSync(dataDir).some(file => file.startsWith('.theme.json.') && file.endsWith('.tmp')),
-      false,
-      'failed commit removes its temporary file',
-    )
-  } finally {
-    builtinFs.renameSync = originalRename
-    syncBuiltinESMExports()
-  }
-
-  const targetDir = join(sandboxHome, 'race-target')
-  const originalWrite = builtinFs.writeFileSync
-  let racedFile
-  try {
-    builtinFs.writeFileSync = (path, data, options) => {
-      const target = String(path)
-      if (racedFile === undefined && target.startsWith(targetDir) && options?.flag === 'wx') {
-        racedFile = target.split(/[\\/]/).at(-1)
-        originalWrite(path, '{ "user": true }', { flag: 'wx' })
-      }
-      return originalWrite(path, data, options)
-    }
-    syncBuiltinESMExports()
-    const result = installBundledThemes(targetDir, join(pluginRoot, 'themes'))
-    assert.equal(typeof racedFile, 'string', 'the test injected a competing creator')
-    assert.equal(result.skipped.includes(racedFile), true, 'EEXIST is a protected user-file skip')
-    assert.deepEqual(JSON.parse(readFileSync(join(targetDir, racedFile), 'utf8')), { user: true })
-  } finally {
-    builtinFs.writeFileSync = originalWrite
-    syncBuiltinESMExports()
-  }
-  console.log('✓ filesystem commits: failed atomic writes preserve JSON; competing theme creation skips')
-}
-
-// ── 12a. torn installation: a corrupt target is backed up and reinstalled ───
-{
-  const targetDir = join(sandboxHome, 'heal-target')
-  const sourceDir = join(pluginRoot, 'themes')
-  mkdirSync(targetDir, { recursive: true })
-
-  // A valid user file stays untouched — the never-overwrite rule wins.
-  writeFileSync(join(targetDir, 'pink-night.json'), '{ "user": true }')
-  // A torn write (crash mid-install) leaves invalid JSON behind.
-  writeFileSync(join(targetDir, 'pink-day.json'), '{ "name": "pink-day", "colors": {')
-  const heal = installBundledThemes(targetDir, sourceDir)
-  assert.deepEqual(heal.repaired, ['pink-day.json'], 'the corrupt target is reported as repaired')
-  assert.equal(heal.skipped.includes('pink-night.json'), true)
-  assert.equal(heal.failed.length, 0)
-  assert.equal(
-    JSON.parse(readFileSync(join(targetDir, 'pink-night.json'), 'utf8')).user,
-    true,
-    'valid user file untouched',
-  )
-  const reinstalled = JSON.parse(readFileSync(join(targetDir, 'pink-day.json'), 'utf8'))
-  assert.equal(reinstalled.name, 'pink-day')
-  const backups = readdirSync(targetDir).filter(entry =>
-    entry.startsWith('pink-day.json.corrupt-'),
-  )
-  assert.equal(backups.length, 1, 'the damaged file is preserved as a timestamped backup')
-  assert.equal(readFileSync(join(targetDir, backups[0]), 'utf8'), '{ "name": "pink-day", "colors": {')
-
-  // Next boot: everything parses, so no churn.
-  const steady = installBundledThemes(targetDir, sourceDir)
-  assert.deepEqual(steady.repaired, [])
-  assert.deepEqual(steady.installed, [])
-  assert.equal(steady.skipped.length, 3)
-
-  // A target the process cannot even read is not proven corrupt — keep skipping.
-  const unreadable = join(targetDir, 'pink-ansi.json')
-  const originalRead = builtinFs.readFileSync
-  try {
-    builtinFs.readFileSync = (path, ...rest) => {
-      if (String(path) === unreadable) throw new Error('EBUSY: locked')
-      return originalRead(path, ...rest)
-    }
-    syncBuiltinESMExports()
-    const blocked = installBundledThemes(targetDir, sourceDir)
-    assert.deepEqual(blocked.repaired, [])
-    assert.equal(blocked.skipped.includes('pink-ansi.json'), true)
-  } finally {
-    builtinFs.readFileSync = originalRead
-    syncBuiltinESMExports()
-  }
-
-  // A successful backup followed by a failed replacement is a failure, not a
-  // protected skip: the target is absent until the next boot can retry.
-  const failedHeal = join(targetDir, 'pink-ansi.json')
-  writeFileSync(failedHeal, '{ broken')
-  const originalWrite = builtinFs.writeFileSync
-  try {
-    builtinFs.writeFileSync = (path, data, options) => {
-      if (String(path) === failedHeal && options?.flag === 'wx' && !existsSync(failedHeal)) {
-        throw new Error('ENOSPC: replacement blocked')
-      }
-      return originalWrite(path, data, options)
-    }
-    syncBuiltinESMExports()
-    const failed = installBundledThemes(targetDir, sourceDir)
-    assert.equal(failed.failed.includes('pink-ansi.json'), true)
-    assert.equal(failed.skipped.includes('pink-ansi.json'), false)
-  } finally {
-    builtinFs.writeFileSync = originalWrite
-    syncBuiltinESMExports()
-  }
-  console.log('✓ torn installation: corrupt target backed up and reinstalled; user files and unreadable targets untouched')
-}
-
-// ── 12b. follow logging: the first settings doc is a baseline, not a flip ──
-{
-  // Default user layer (empty doc): no spurious "follow: disabled" line.
-  const settingsRecord = { registerCalls: [], watchers: [] }
-  const { ctx, record } = makeStubCtx({ settingsService: fakeSettingsService(settingsRecord, {}) })
-  await applyAndSettle(ctx)
-  assert.equal(
-    record.infos.some(message => message.includes('follow: disabled')),
-    false,
-    'a baseline doc matching the default must not log a disabled flip',
-  )
-
-  // User layer that starts enabled: the cache applies during the baseline.
-  const dataDir = join(sandboxHome, '.dsh-tui')
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
-  const enabledRecord = { registerCalls: [], watchers: [] }
-  const { ctx: enabledCtx, record: enabledInfo } = makeStubCtx({
-    status: fakeStatus([]),
-    sections: fakeSections([]),
-    settingsService: fakeSettingsService(enabledRecord, { followSystem: true }),
-  })
-  await applyAndSettle(enabledCtx)
-  assert.equal(readThemePref(dataDir), 'pink-day', 'an enabled baseline applies the cached background')
-  assert.equal(
-    enabledInfo.infos.some(message => message.includes('follow: disabled')),
-    false,
-  )
-
-  // A real toggle keeps its log.
-  for (const watcher of enabledRecord.watchers) watcher({ followSystem: false })
-  assert.equal(
-    enabledInfo.infos.filter(message => message.includes('follow: disabled')).length,
-    1,
-    'disabling follow after the baseline logs exactly once',
-  )
-  assert.equal(readThemePref(dataDir), 'pink-day', 'the manual choice stays intact')
-  console.log('✓ follow logging: baseline docs stay quiet, real toggles still log')
-}
-
-// ── 12c. unreadable bundled source: the directory-level failure stays precise ──
-{
-  const targetDir = join(sandboxHome, 'source-fail-target')
-  const sourceDir = join(pluginRoot, 'themes')
-  const originalReaddir = builtinFs.readdirSync
-  try {
-    builtinFs.readdirSync = (path, ...rest) => {
-      if (String(path) === sourceDir) throw new Error('EACCES: source unreadable')
-      return originalReaddir(path, ...rest)
-    }
-    syncBuiltinESMExports()
-    const result = installBundledThemes(targetDir, sourceDir)
-    assert.deepEqual(result.failed, [], 'no per-file failure exists when nothing was attempted')
-    assert.match(
-      result.sourceError ?? '',
-      /could not read bundled themes from .*themes.*EACCES/,
-      'the directory-level error names the source and the cause',
-    )
-  } finally {
-    builtinFs.readdirSync = originalReaddir
-    syncBuiltinESMExports()
-  }
-  console.log('✓ unreadable bundled source: precise sourceError, no bogus per-file failure')
-}
-
-// ── 12. status injection: session handlers die with tuiStatus activation ────
+// ── 10. status injection: session handlers die with tuiStatus activation ───
 {
   const outerHandlers = new Map()
   let activate
@@ -999,11 +617,14 @@ const emit = (record, event, ...args) => {
   }
   const effective = {
     statusEnabled: true,
+    statusGlyph: '✿',
+    statusSeparator: '·',
     showGlyph: false,
     showClock: false,
     showTurns: true,
     statusScope: 'all-themes',
   }
+  setActiveTheme('pink-night')
   startStatusLine(outerCtx, () => effective)
 
   const firstCalls = []
@@ -1027,173 +648,99 @@ const emit = (record, event, ...args) => {
   console.log('✓ status lifecycle: session handlers follow tuiStatus activation')
 }
 
-// ── 13. toast feedback: the 0.10 seam surfaces what the logger cannot ───────
+// ── 11. toast relay: delivered, dropped-and-retried, seam-less and bounded ─
 {
-  setToastRetryDelaysForTests([5, 5])
-  const dataDir = join(sandboxHome, '.dsh-tui')
-  mkdirSync(dataDir, { recursive: true })
-
-  // 13a. Startup baseline with a disagreeing cache: one success toast that
-  // points at /reload (the live TUI still shows the previous palette). The
-  // tuiToast seam trails apply on a real host (extensions row), so the send
-  // must survive on the bounded retry until the seam shows up.
-  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
-  const baselineDeliveries = []
-  const baselineRecord = { registerCalls: [], watchers: [] }
-  const baselineContext = makeStubCtx({
-    status: fakeStatus([]),
-    sections: fakeSections([]),
-    settingsService: fakeSettingsService(baselineRecord, { followSystem: true }),
-    deferToast: true,
-  })
-  await applyAndSettle(baselineContext.ctx)
-  assert.equal(readThemePref(dataDir), 'pink-day', 'the pref write is synchronous, independent of the toast seam')
-  baselineContext.record.activateToast(fakeToast(baselineDeliveries))
-  const baselineDeadline = Date.now() + 2_000
-  while (baselineDeliveries.length === 0 && Date.now() < baselineDeadline) {
-    await new Promise(resolve => setTimeout(resolve, 5))
+  // Generous retry slots here on purpose: Windows timer coalescing can delay a
+  // 0ms macrotask past 5ms, and the chain must still have a slot left for the
+  // sink that arrives late (the production delays are [2s, 4s]).
+  setToastRetryDelaysForTests([20, 20, 20, 20])
+  const themeFile = join(sandboxThemes, 'pink-night.json')
+  const seedLegacyFile = () => {
+    mkdirSync(sandboxThemes, { recursive: true })
+    writeFileSync(themeFile, '{ "name": "pink-night", "colors": {} }')
+    rmSync(join(sandboxData, NOTICE_FILE), { force: true })
   }
-  assert.equal(baselineDeliveries.length, 1, 'a real baseline pref write toasts exactly once')
-  assert.equal(baselineDeliveries[0][1], 'success')
-  assert.match(baselineDeliveries[0][0], /pink-day/)
-  assert.match(baselineDeliveries[0][0], /reload/)
 
-  // 13b. Stable baseline (pref already matches the cache): quiet.
-  const quietDeliveries = []
-  const quietRecord = { registerCalls: [], watchers: [] }
-  const { ctx: quietCtx } = makeStubCtx({
-    status: fakeStatus([]),
-    sections: fakeSections([]),
-    settingsService: fakeSettingsService(quietRecord, { followSystem: true }),
-    toast: fakeToast(quietDeliveries),
-  })
-  await applyAndSettle(quietCtx)
-  assert.equal(quietDeliveries.length, 0, 'a baseline that changes nothing stays silent')
-
-  // 13c. Toggle confirmations: an explicit enable always answers — with the
-  // matching-cache confirmation, or the honest warning when nothing applies.
-  const toggleDeliveries = []
-  const toggleRecord = { registerCalls: [], watchers: [] }
-  const { ctx: toggleCtx } = makeStubCtx({
-    status: fakeStatus([]),
-    sections: fakeSections([]),
-    settingsService: fakeSettingsService(toggleRecord, {}),
-    toast: fakeToast(toggleDeliveries),
-  })
-  await applyAndSettle(toggleCtx)
-  for (const w of toggleRecord.watchers) w({ followSystem: true })
-  assert.equal(toggleDeliveries.length, 1, 'toggle-on with a matching cache confirms')
-  assert.equal(toggleDeliveries[0][1], 'success')
-  assert.equal(/reload/.test(toggleDeliveries[0][0]), false, 'no reload hint when nothing changed')
-  for (const w of toggleRecord.watchers) w({ followSystem: false })
-  rmSync(join(dataDir, 'theme-follow.json'), { force: true })
-  for (const w of toggleRecord.watchers) w({ followSystem: true })
-  assert.equal(toggleDeliveries.length, 2, 'toggle-on without a cache answers too')
-  assert.equal(toggleDeliveries[1][1], 'warning')
-
-  // 13d. A toast dropped before the host sink exists is retried until delivered.
+  // 11a. The toast seam trails apply on a real host (extensions row), so the
+  // notice must survive on the bounded retry until the sink shows up.
+  seedLegacyFile()
   const retryDeliveries = []
-  const retryRecord = { registerCalls: [], watchers: [] }
-  const { ctx: retryCtx } = makeStubCtx({
-    status: fakeStatus([]),
-    sections: fakeSections([]),
-    settingsService: fakeSettingsService(retryRecord, {}),
-    toast: fakeToast(retryDeliveries, { dropFirst: 1 }),
-  })
-  await applyAndSettle(retryCtx)
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: false, at: 1 }))
-  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'pink-day' }, null, 2))
-  for (const w of retryRecord.watchers) w({ followSystem: true })
-  const retryDeadline = Date.now() + 2_000
-  while (retryDeliveries.length === 0 && Date.now() < retryDeadline) {
-    await new Promise(resolve => setTimeout(resolve, 5))
-  }
+  const retryContext = makeStubCtx({ deferToast: true })
+  await applyAndSettle(retryContext.ctx)
+  assert.equal(retryDeliveries.length, 0, 'no sink yet, no delivery')
+  retryContext.record.activateToast(fakeToast(retryDeliveries, { dropFirst: 1 }))
+  await waitFor(() => retryDeliveries.length > 0)
   assert.equal(retryDeliveries.length, 1, 'a dropped toast is retried and delivered')
-  assert.match(retryDeliveries[0][0], /pink-night/)
+  assert.match(retryDeliveries[0][0], /pink-night\.json/)
+  assert.equal(retryDeliveries[0][1], undefined, 'the notice is neutral, not an error')
 
-  // 13e. Toast-seam-less host (dsh-TUI < 0.10): sends are silent no-ops and
-  // the follow feature itself is unchanged. The retry chain stays bounded:
-  // once it gives up, a seam arriving later must not resurrect the abandoned
-  // toast.
-  const legacyRecord = { registerCalls: [], watchers: [] }
-  const legacyContext = makeStubCtx({
-    status: fakeStatus([]),
-    sections: fakeSections([]),
-    settingsService: fakeSettingsService(legacyRecord, {}),
-    deferToast: true,
-  })
-  await applyAndSettle(legacyContext.ctx)
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: 1 }))
-  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'dark' }, null, 2))
-  for (const w of legacyRecord.watchers) w({ followSystem: true })
-  assert.equal(readThemePref(dataDir), 'pink-day', 'follow works unchanged without the toast seam')
-  await new Promise(resolve => setTimeout(resolve, 50)) // the [5, 5] chain is long exhausted
+  // 11b. A sink that never arrives keeps the send bounded: the chain gives up
+  // and a late seam must not resurrect an abandoned toast.
+  setToastRetryDelaysForTests([5, 5])
   const lateDeliveries = []
-  legacyContext.record.activateToast(fakeToast(lateDeliveries))
+  const lateContext = makeStubCtx({ deferToast: true })
+  rmSync(join(sandboxData, NOTICE_FILE), { force: true })
+  await applyAndSettle(lateContext.ctx)
+  await new Promise(resolve => setTimeout(resolve, 50)) // the [5, 5] chain is long exhausted
+  lateContext.record.activateToast(fakeToast(lateDeliveries))
   await settle()
   assert.equal(lateDeliveries.length, 0, 'an abandoned toast is not resurrected by a late seam')
 
-  // 13f. Shadow hint: legacy same-named files that are byte-identical to the
-  // bundled copy are pointed out once on runtime confirmation; user edits
-  // stay unmentioned. Files this activation installed itself are excluded
-  // (they were already removed before the check).
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  mkdirSync(sandboxThemes, { recursive: true })
-  for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
-    writeFileSync(join(sandboxThemes, `${theme}.json`), readFileSync(join(pluginRoot, 'themes', `${theme}.json`), 'utf8'))
-  }
-  assert.deepEqual(findShadowedBundledThemes().sort(), ['pink-ansi.json', 'pink-day.json', 'pink-night.json'])
-  const shadowDeliveries = []
-  const shadowContext = makeStubCtx({ deferThemes: true, toast: fakeToast(shadowDeliveries) })
-  apply(shadowContext.ctx)
-  shadowContext.record.activateThemes(fakeThemes(shadowContext.record))
-  await settle()
-  assert.equal(shadowDeliveries.length, 1, 'identical legacy files are pointed out once')
-  assert.equal(shadowDeliveries[0][1], undefined, 'the shadow hint is neutral, not an error')
-  assert.match(shadowDeliveries[0][0], /pink-day\.json/)
-
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  installBundledThemes()
-  writeFileSync(join(sandboxThemes, 'pink-night.json'), '{ "name": "pink-night", "colors": { "text": "#123456" } }')
-  const editDeliveries = []
-  const editContext = makeStubCtx({ deferThemes: true, toast: fakeToast(editDeliveries) })
-  apply(editContext.ctx)
-  editContext.record.activateThemes(fakeThemes(editContext.record))
-  await settle()
-  assert.equal(editDeliveries.length, 1)
-  assert.equal(/pink-night\.json/.test(editDeliveries[0][0]), false, 'a user-edited file is never nagged')
-  assert.equal(/pink-day\.json/.test(editDeliveries[0][0]), true)
-
-  // 13g. Corrupt-file self-heal is surfaced as a warning toast. The toast
-  // seam trails apply on a real host, so the send waits on the retry chain.
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  mkdirSync(sandboxThemes, { recursive: true })
-  writeFileSync(join(sandboxThemes, 'pink-day.json'), '{ broken')
-  const healDeliveries = []
-  const healContext = makeStubCtx({ deferThemes: true, deferToast: true })
-  apply(healContext.ctx)
-  healContext.record.activateToast(fakeToast(healDeliveries))
-  const healDeadline = Date.now() + 2_000
-  while (healDeliveries.length === 0 && Date.now() < healDeadline) {
-    await new Promise(resolve => setTimeout(resolve, 5))
-  }
-  assert.equal(healDeliveries.length, 1, 'a repaired theme file is surfaced')
-  assert.equal(healDeliveries[0][1], 'warning')
-  assert.match(healDeliveries[0][0], /pink-day\.json/)
-
-  rmSync(sandboxThemes, { recursive: true, force: true })
   setToastRetryDelaysForTests([2_000, 4_000])
-  console.log('✓ toast feedback: follow/self-heal/shadow hints delivered, dropped and seam-less sends retried, legacy hosts silent and bounded')
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  rmSync(join(sandboxData, NOTICE_FILE), { force: true })
+  console.log('✓ toast relay: retried until the seam arrives, bounded once it gave up')
 }
 
-// ── 14. hot path: the token firehose must not reach render or the disk ──────
+// ── 12. legacy notice: one toast, one marker, and only for plugin files ────
 {
-  const themePrefPath = join(sandboxHome, '.dsh-tui', 'theme.json')
-  writeFileSync(themePrefPath, JSON.stringify({ theme: 'pink-night' }, null, 2))
-  // Earlier scenarios ran status activations against a different pref; drop
-  // their cached answer so this scenario starts from the fresh sandbox state.
-  invalidateThemePrefCacheForTests()
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  rmSync(join(sandboxData, NOTICE_FILE), { force: true })
+
+  // A user's own theme file is not a migration artifact: foreign names are
+  // ignored, and with nothing to report there is no toast and no marker.
+  mkdirSync(sandboxThemes, { recursive: true })
+  writeFileSync(join(sandboxThemes, 'my-theme.json'), '{ "name": "my-theme", "colors": {} }')
+  assert.deepEqual(findLegacyThemeFiles(), [])
+  const quietDeliveries = []
+  const quietContext = makeStubCtx({ toast: fakeToast(quietDeliveries) })
+  await applyAndSettle(quietContext.ctx)
+  assert.equal(quietDeliveries.length, 0, 'no legacy file, no notice')
+  assert.equal(existsSync(join(sandboxData, NOTICE_FILE)), false, 'no marker without a notice')
+
+  // A leftover plugin file: one toast naming it, and a marker so the next boot
+  // stays quiet. The file itself is never touched — deleting a user's theme is
+  // not this plugin's business any more.
+  const legacy = join(sandboxThemes, 'pink-day.json')
+  writeFileSync(legacy, '{ "name": "pink-day", "colors": {} }')
+  assert.deepEqual(findLegacyThemeFiles(), ['pink-day.json'])
+  const deliveries = []
+  const first = makeStubCtx({ toast: fakeToast(deliveries) })
+  await applyAndSettle(first.ctx)
+  assert.equal(deliveries.length, 1, 'the leftover file is pointed out exactly once')
+  assert.match(deliveries[0][0], /pink-day\.json/)
+  assert.match(deliveries[0][0], /dsh-TUI/)
+  assert.equal(existsSync(join(sandboxData, NOTICE_FILE)), true, 'the notice is recorded')
+  assert.equal(
+    readFileSync(legacy, 'utf8'),
+    '{ "name": "pink-day", "colors": {} }',
+    'the notice never edits or deletes the file',
+  )
+
+  const secondDeliveries = []
+  const second = makeStubCtx({ toast: fakeToast(secondDeliveries) })
+  await applyAndSettle(second.ctx)
+  assert.equal(secondDeliveries.length, 0, 'the marker keeps later boots quiet')
+
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  rmSync(join(sandboxData, NOTICE_FILE), { force: true })
+  console.log('✓ legacy notice: one neutral toast for plugin files, recorded once, file untouched')
+}
+
+// ── 13. hot path: the token firehose must not reach render or the disk ─────
+{
+  setActiveTheme('pink-night')
+  const themePrefPath = join(sandboxData, 'theme.json')
   const statusCalls = []
   const settingsRecord = { registerCalls: [], watchers: [] }
   const { ctx, record } = makeStubCtx({
@@ -1276,13 +823,9 @@ const emit = (record, event, ...args) => {
   console.log('✓ hot path: firehose events render nothing and never read the pref; boundaries use the cache')
 }
 
-// ── 15. settings panel UX: groups, ornament drafts, follow format ───────────
+// ── 14. settings panel UX: one group, ornament drafts, live edits ──────────
 {
-  const dataDir = join(sandboxHome, '.dsh-tui')
-  rmSync(dataDir, { recursive: true, force: true })
-  mkdirSync(dataDir, { recursive: true })
-  writeFileSync(join(dataDir, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
-  invalidateThemePrefCacheForTests()
+  setActiveTheme('pink-night')
   const statusCalls = []
   const sectionsCalls = []
   const settingsRecord = { registerCalls: [], watchers: [] }
@@ -1296,15 +839,14 @@ const emit = (record, event, ...args) => {
   const fieldByPath = path =>
     section.fields.find(field => JSON.stringify(field.path) === JSON.stringify(path))
 
-  // Navigation groups: two subpages, every field assigned.
-  assert.deepEqual(
-    section.groups.map(group => group.id).sort(),
-    ['follow', 'status-line'],
-  )
-  assert.equal(fieldByPath(['followSystem']).group, 'follow')
+  // One navigation group, every field assigned; the theme half of the card is
+  // gone with the feature (no palette, no background follow).
+  assert.deepEqual(section.groups.map(group => group.id), ['status-line'])
+  assert.equal(section.title, 'dsh-tui-theme')
   for (const path of [['showGlyph'], ['statusGlyph'], ['showClock'], ['showTurns'], ['statusSeparator'], ['statusScope']]) {
-    assert.equal(fieldByPath(path).group, 'status-line')
+    assert.equal(fieldByPath(path).group, 'status-line', `${path.join('.')} belongs to the group`)
   }
+  assert.equal(fieldByPath(['followSystem']), undefined, 'background follow left with the themes')
 
   // Ornament draft gate: 1–2 display cells, control chars refused, empty
   // resets to the built-in default, unset displays the effective value.
@@ -1323,17 +865,6 @@ const emit = (record, event, ...args) => {
   assert.deepEqual(separator.parse('✦'), { kind: 'set', value: '✦' })
   assert.equal(separator.format(undefined), '·')
 
-  // followSystem format surfaces the cached follow state the startup would
-  // consult — the "toggled on, nothing happened" reason, on the surface.
-  const follow = fieldByPath(['followSystem'])
-  assert.equal(follow.format(undefined), 'off', 'the cordis layer default is off')
-  assert.equal(follow.format(false), 'off')
-  assert.equal(follow.format(true), 'on（无缓存，启动时不动）')
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: true, at: Date.UTC(2026, 8, 12) }))
-  assert.match(follow.format(true), /^on（缓存: light · \d{4}-\d{2}-\d{2}）$/)
-  writeFileSync(join(dataDir, 'theme-follow.json'), JSON.stringify({ light: false }))
-  assert.equal(follow.format(true), 'on（缓存: dark）', 'a cache without a timestamp omits the date')
-
   // A committed ornament edit lands live on the scalar line.
   for (const watcher of settingsRecord.watchers) {
     watcher({ statusGlyph: '❀', statusSeparator: '~' })
@@ -1348,14 +879,12 @@ const emit = (record, event, ...args) => {
   }
   emit(record, 'session/event', { id: 'u1' }, { type: 'turn/end' })
   assert.match(statusCalls.at(-1)[1], /^xy ~ /, 'control chars stripped and the rest capped at 2 cells')
-  console.log('✓ settings panel: two groups, ornament drafts gated, follow format shows the cache state')
+  console.log('✓ settings panel: one group, ornament drafts gated, edits land live')
 }
 
-// ── 16. rich status view: themed one-row view on registerView-capable hosts ─
+// ── 15. rich status view: embedded palette colors on registerView hosts ────
 {
-  const themePrefPath = join(sandboxHome, '.dsh-tui', 'theme.json')
-  writeFileSync(themePrefPath, JSON.stringify({ theme: 'pink-night' }, null, 2))
-  invalidateThemePrefCacheForTests()
+  setActiveTheme('pink-night')
   const statusCalls = []
   const viewCalls = []
   const settingsRecord = { registerCalls: [], watchers: [] }
@@ -1387,11 +916,22 @@ const emit = (record, event, ...args) => {
   const element = renderComponent()
   assert.equal(element.type, 'box', 'one row Box')
   assert.equal(element.children[0].type, 'text')
-  assert.equal(element.children[0].props.color, 'rgb(242,123,166)', 'the glyph uses the brand key of the active palette')
+  assert.equal(element.children[0].props.color, 'rgb(242,123,166)', 'the glyph uses the night palette accent')
   assert.equal(element.children[0].children[0], '✿')
-  assert.equal(element.children[1].props.color, '#77646D', 'the separator uses the subtle key')
+  assert.equal(element.children[1].props.color, '#77646D', 'the separator uses the night palette subtle')
   assert.match(element.children[2].children[0], /^\d{2}:\d{2}$/)
-  assert.equal(element.children[2].props.color, '#C4B0B9', 'the clock uses the bottom-bar inactiveShimmer key')
+  assert.equal(element.children[2].props.color, '#C4B0B9', 'the clock uses the night palette inactiveShimmer')
+
+  // A decoy palette file must not be consulted: the colors are embedded now,
+  // and the host owns the palette table.
+  mkdirSync(sandboxThemes, { recursive: true })
+  writeFileSync(
+    join(sandboxThemes, 'pink-night.json'),
+    JSON.stringify({ name: 'pink-night', base: 'dark', colors: { accent: '#000000', inactiveShimmer: '#000000', subtle: '#000000' } }),
+  )
+  emit(record, 'session/event', { id: 'decoy' }, { type: 'turn/end' })
+  assert.equal(renderComponent().children[0].props.color, 'rgb(242,123,166)', 'a decoy file changes no color')
+  rmSync(sandboxThemes, { recursive: true, force: true })
 
   // Turn boundaries push through the store and land in the next render.
   const session = { id: 'r1' }
@@ -1401,16 +941,27 @@ const emit = (record, event, ...args) => {
   assert.equal(withTurns.children.at(-1).props.color, '#C4B0B9')
 
   // A /theme switch (the host rewrites the pref) lands at the very next
-  // render: rewrite the pref to pink-day and the palette moves with it,
-  // without any TTL wait.
-  writeFileSync(themePrefPath, JSON.stringify({ theme: 'pink-day' }, null, 2))
+  // render: pink-day and pink-ansi carry their own embedded colors, and a
+  // non-pink theme drops to the terminal default.
+  const expected = {
+    'pink-day': ['rgb(222,110,150)', '#B3A3AC', '#9E6E82'],
+    'pink-ansi': ['ansi:magentaBright', 'ansi:white', 'ansi:whiteBright'],
+  }
+  for (const [theme, [glyphColor, separatorColor, textColor]] of Object.entries(expected)) {
+    setActiveTheme(theme)
+    emit(record, 'session/event', session, { type: 'turn/end' })
+    const view = renderComponent()
+    assert.equal(view.children[0].props.color, glyphColor, `${theme} glyph`)
+    assert.equal(view.children[1].props.color, separatorColor, `${theme} separator`)
+    assert.equal(view.children.at(-1).props.color, textColor, `${theme} text cell`)
+  }
+  setActiveTheme('dark')
   emit(record, 'session/event', session, { type: 'turn/end' })
-  const dayView = renderComponent()
-  assert.equal(dayView.children[0].props.color, 'rgb(222,110,150)', 'the glyph follows the new palette')
-  assert.equal(dayView.children[2].props.color, '#9E6E82', 'the clock follows the new palette immediately')
+  assert.equal(renderComponent(), null, 'a non-pink theme hides the line by default')
 
   // Toggles fold into the snapshot: all off renders nothing (no scalar
   // fallback either — the rich view just shows nothing).
+  setActiveTheme('pink-night')
   for (const watcher of settingsRecord.watchers) {
     watcher({ showGlyph: false, showClock: false, showTurns: false })
   }
@@ -1434,10 +985,10 @@ const emit = (record, event, ...args) => {
     null,
     'statusEnabled=false renders nothing',
   )
-  console.log('✓ rich status view: themed cells from the palette, mutual exclusion from set()')
+  console.log('✓ rich status view: embedded palette per pink theme, mutual exclusion from set()')
 }
 
-// ── 17. refused rich registration falls back to the scalar path ─────────────
+// ── 16. refused / hostile rich registration falls back to the scalar path ──
 {
   const statusCalls = []
   const viewCalls = []
@@ -1445,128 +996,110 @@ const emit = (record, event, ...args) => {
   await applyAndSettle(ctx)
   assert.equal(viewCalls.length, 1, 'the registration was attempted')
   assert.equal(statusCalls.length > 0, true, 'a refused registration (undefined) falls back to set()')
-  console.log('✓ refused rich registration: the scalar path keeps the line alive')
-}
 
-// ── 17b. hostile rich registration throws: warn, fall back, never propagate ─
-{
-  const statusCalls = []
-  const viewCalls = []
-  const { ctx, record } = makeStubCtx({ status: fakeRichStatus(statusCalls, viewCalls, { throws: true }) })
+  const hostileCalls = []
+  const hostileViews = []
+  const { ctx: hostileCtx, record: hostileRecord } = makeStubCtx({
+    status: fakeRichStatus(hostileCalls, hostileViews, { throws: true }),
+  })
   // applyAndSettle resolving at all is the non-propagation half of the
   // invariant: a synchronous throw escaping the inject callback would land here.
-  await applyAndSettle(ctx)
-  assert.equal(viewCalls.length, 1, 'the registration was attempted')
-  assert.equal(statusCalls.length > 0, true, 'a throwing registration falls back to set()')
+  await applyAndSettle(hostileCtx)
+  assert.equal(hostileViews.length, 1, 'the registration was attempted')
+  assert.equal(hostileCalls.length > 0, true, 'a throwing registration falls back to set()')
   assert.equal(
-    record.warnings.some(msg => msg.includes('rich status view registration failed')),
+    hostileRecord.warnings.some(msg => msg.includes('rich status view registration failed')),
     true,
     'the failure is warned, never propagated',
   )
   assert.equal(
-    (record.handlers.get('session/event') ?? []).length >= 1,
+    (hostileRecord.handlers.get('session/event') ?? []).length >= 1,
     true,
     'the session wiring survived the throw',
   )
-  console.log('✓ hostile rich registration: warn + scalar fallback, session wiring intact')
+  console.log('✓ rich registration: refusal and hostile throws both keep the scalar line alive')
 }
 
-// ── 18. shadow cleanup dialog: one confirm, byte-checked deletion ───────────
+// ── 17. handover invariants: no themes shipped, none registered, none read ─
 {
-  const seedShadow = () => {
-    rmSync(sandboxThemes, { recursive: true, force: true })
-    mkdirSync(sandboxThemes, { recursive: true })
-    for (const theme of ['pink-night', 'pink-day', 'pink-ansi']) {
-      writeFileSync(join(sandboxThemes, `${theme}.json`), readFileSync(join(pluginRoot, 'themes', `${theme}.json`), 'utf8'))
+  // The package only ships what it still uses.
+  const packageJson = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'))
+  assert.equal(packageJson.files.includes('themes'), false, 'themes/ must not ship')
+  assert.equal(existsSync(join(pluginRoot, 'themes')), false, 'themes/ must not exist')
+  for (const module of ['autoTheme', 'themeAssets', 'runtimeThemes', 'shadowCleanup']) {
+    assert.equal(
+      existsSync(join(pluginRoot, 'lib', 'types', `${module}.js`)),
+      false,
+      `lib/types/${module}.js must be gone with the theme half`,
+    )
+  }
+
+  // A runtime theme service may be present — the plugin must not register,
+  // install, or repair anything (the host owns the pink names now).
+  const registers = []
+  setActiveTheme('pink-night')
+  const statusCalls = []
+  const full = makeStubCtx({ status: fakeStatus(statusCalls), themes: fakeThemes(registers) })
+  await applyAndSettle(full.ctx)
+  emit(full.record, 'session/event', { id: 'x1' }, { type: 'turn/end' })
+  assert.deepEqual(registers, [], 'the theme seam stays untouched even when it is present')
+  assert.deepEqual(readdirSync(sandboxData), ['theme.json'], 'and no theme file appears next to the pref')
+
+  // A planted palette file is not read: the rich path colors from palette.ts
+  // alone (single source, no shadowing rules to reason about).
+  mkdirSync(sandboxThemes, { recursive: true })
+  writeFileSync(join(sandboxThemes, 'pink-night.json'), '{ "name": "pink-night", "colors": {} }')
+  const originalRead = builtinFs.readFileSync
+  let paletteReads = 0
+  try {
+    builtinFs.readFileSync = (path, ...rest) => {
+      if (String(path).startsWith(sandboxThemes)) paletteReads += 1
+      return originalRead(path, ...rest)
     }
+    syncBuiltinESMExports()
+    const viewCalls = []
+    const reader = makeStubCtx({ status: fakeRichStatus([], viewCalls) })
+    await applyAndSettle(reader.ctx)
+    emit(reader.record, 'session/event', { id: 'x2' }, { type: 'turn/end' })
+    assert.equal(paletteReads, 0, 'no theme file is read for colors')
+  } finally {
+    builtinFs.readFileSync = originalRead
+    syncBuiltinESMExports()
+    rmSync(sandboxThemes, { recursive: true, force: true })
+    rmSync(join(sandboxData, NOTICE_FILE), { force: true })
   }
 
-  // 18a. Dialog answered with "delete": the byte-identical copies are
-  // removed and the result is toasted.
-  seedShadow()
-  const requests = []
-  const answers = []
-  const cleanDeliveries = []
-  const cleanContext = makeStubCtx({
-    deferThemes: true,
-    toast: fakeToast(cleanDeliveries),
-    dialogs: fakeDialogs(requests, answers),
-  })
-  apply(cleanContext.ctx)
-  cleanContext.record.activateThemes(fakeThemes(cleanContext.record))
-  await settle()
-  assert.equal(requests.length, 1, 'exactly one confirm dialog is offered')
-  assert.equal(requests[0].owner?.tuiDialogs !== undefined, true, 'the owner is the inject-scoped context')
-  for (const file of ['pink-night.json', 'pink-day.json', 'pink-ansi.json']) {
-    assert.ok(requests[0].request.message.includes(file), `the dialog names ${file}`)
+  // The only write the plugin may ever perform: the notice marker, in an
+  // otherwise untouched data directory. Point HOME at a fresh sandbox for the
+  // check, so nothing from the earlier scenarios is in the way.
+  const isolatedHome = mkdtempSync(join(tmpdir(), 'pink-status-isolated-'))
+  const isolatedData = join(isolatedHome, '.dsh-tui')
+  mkdirSync(join(isolatedData, 'themes'), { recursive: true })
+  writeFileSync(join(isolatedData, 'themes', 'pink-night.json'), '{ "name": "pink-night", "colors": {} }')
+  writeFileSync(join(isolatedData, 'theme.json'), JSON.stringify({ theme: 'pink-night' }, null, 2))
+  const previousHome = { USERPROFILE: process.env.USERPROFILE, HOME: process.env.HOME }
+  try {
+    process.env.USERPROFILE = isolatedHome
+    process.env.HOME = isolatedHome
+    invalidateThemePrefCacheForTests()
+    const deliveries = []
+    const isolated = makeStubCtx({ status: fakeStatus([]), toast: fakeToast(deliveries) })
+    await applyAndSettle(isolated.ctx)
+    emit(isolated.record, 'session/event', { id: 'iso' }, { type: 'turn/end' })
+    assert.equal(deliveries.length, 1, 'the notice still fires on a fresh install')
+    const written = readdirSync(isolatedData).sort()
+    assert.deepEqual(written, ['theme-plugin-notice.json', 'theme.json', 'themes'], 'the marker is the only addition')
+    assert.deepEqual(readdirSync(join(isolatedData, 'themes')), ['pink-night.json'], 'the legacy file is left alone')
+    assert.equal(readThemePref(isolatedData), 'pink-night', 'the pref is read, never rewritten')
+  } finally {
+    if (previousHome.USERPROFILE === undefined) delete process.env.USERPROFILE
+    else process.env.USERPROFILE = previousHome.USERPROFILE
+    if (previousHome.HOME === undefined) delete process.env.HOME
+    else process.env.HOME = previousHome.HOME
+    invalidateThemePrefCacheForTests()
+    rmSync(isolatedHome, { recursive: true, force: true })
   }
-  assert.ok(requests[0].request.title.includes('旧主题文件'))
-  answers[0](true)
-  await settle()
-  assert.equal(existsSync(join(sandboxThemes, 'pink-night.json')), false, 'confirmation removes the shadowing copy')
-  assert.equal(existsSync(join(sandboxThemes, 'pink-day.json')), false, 'confirmation removes the shadowing copy')
-  assert.equal(existsSync(join(sandboxThemes, 'pink-ansi.json')), false, 'confirmation removes the shadowing copy')
-  const cleanToast = cleanDeliveries.find(delivery => delivery[0].includes('已清理'))
-  assert.ok(cleanToast, 'the cleanup result is toasted')
-  assert.equal(cleanToast[1], 'success')
-
-  // 18b. Declining keeps the previous behavior exactly: files stay, no
-  // cleanup toast.
-  seedShadow()
-  const declineRequests = []
-  const declineAnswers = []
-  const declineDeliveries = []
-  const declineContext = makeStubCtx({
-    deferThemes: true,
-    toast: fakeToast(declineDeliveries),
-    dialogs: fakeDialogs(declineRequests, declineAnswers),
-  })
-  apply(declineContext.ctx)
-  declineContext.record.activateThemes(fakeThemes(declineContext.record))
-  await settle()
-  assert.equal(declineRequests.length, 1, 'the dialog is offered again for the new activation')
-  declineAnswers[0](false)
-  await settle()
-  assert.equal(existsSync(join(sandboxThemes, 'pink-night.json')), true, 'declining keeps the file')
-  assert.equal(
-    declineDeliveries.some(delivery => delivery[0].includes('已清理')),
-    false,
-    'no cleanup toast without a confirmation',
-  )
-
-  // 18c. The dialogs seam arriving late still asks exactly once; a file the
-  // user edited between detection and confirmation is never deleted.
-  seedShadow()
-  writeFileSync(join(sandboxThemes, 'pink-day.json'), '{ "name": "pink-day", "colors": { "text": "#123456" } }')
-  const lateRequests = []
-  const lateAnswers = []
-  const lateContext = makeStubCtx({ deferThemes: true, deferDialogs: true, toast: fakeToast([]) })
-  apply(lateContext.ctx)
-  lateContext.record.activateThemes(fakeThemes(lateContext.record))
-  await settle()
-  assert.equal(lateRequests.length, 0, 'no dialog before the seam arrives')
-  lateContext.record.activateDialogs(fakeDialogs(lateRequests, lateAnswers))
-  await settle()
-  assert.equal(lateRequests.length, 1, 'the parked offer fires when the seam arrives')
-  lateAnswers[0](true)
-  await settle()
-  assert.equal(existsSync(join(sandboxThemes, 'pink-night.json')), false, 'the still-identical file is removed')
-  assert.equal(existsSync(join(sandboxThemes, 'pink-day.json')), true, 'the edited file survives the byte check')
-  assert.equal(existsSync(join(sandboxThemes, 'pink-ansi.json')), false)
-
-  // 18d. A hostile dialogs service must not take the activation down.
-  seedShadow()
-  const hostileContext = makeStubCtx({
-    deferThemes: true,
-    dialogs: { confirm() { throw new Error('dialog machinery broken') } },
-  })
-  apply(hostileContext.ctx)
-  hostileContext.record.activateThemes(fakeThemes(hostileContext.record))
-  await settle()
-  assert.equal(existsSync(join(sandboxThemes, 'pink-night.json')), true, 'a failed dialog deletes nothing')
-
-  rmSync(sandboxThemes, { recursive: true, force: true })
-  console.log('✓ shadow cleanup dialog: offered once, byte-checked deletion, decline/late/hostile all safe')
+  console.log('✓ handover: no themes shipped or registered, no palette file read, marker is the only write')
 }
 
 console.log('\nAll plugin verifications passed.')

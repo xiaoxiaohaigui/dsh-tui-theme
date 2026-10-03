@@ -35,11 +35,10 @@
  * must stay equal — a card field outside the list would render editable yet
  * never be served (the host's own status-bar `cost` field shows that failure
  * mode as `（未设置）` forever), and a marked key without a field would be
- * live-editable with no UI. `autoInstallThemes` / `statusEnabled` are
- * deliberately absent: they stay cordis-config knobs (README §配置).
+ * live-editable with no UI. `statusEnabled` is deliberately absent: it stays a
+ * cordis-config knob (README §配置).
  */
 export const LIVE_CONFIG_KEYS = [
-  'followSystem',
   'showGlyph',
   'statusGlyph',
   'showClock',
