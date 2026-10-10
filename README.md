@@ -55,7 +55,7 @@ dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-<版本号>.tgz
 
 ### 截图
 
-主题主界面实测于 dsh-tui 0.9.2，`/settings` 卡片界面来自 0.9.3（截图早于 0.14.0 的 chrome 主题键，图中的底栏进度条、点火动画与光标当时仍是宿主写死的配色）：
+实测于 dsh-TUI 0.14.0 + 本插件 v0.7.5：
 
 | 昼樱 `pink-day` | 夜樱 `pink-night` |
 | :---: | :---: |
@@ -64,8 +64,6 @@ dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-<版本号>.tgz
 `/settings` 里的 pink-theme 区块（终端背景 / 花符 / 时钟 / 轮数 / 状态行展示，保存即时生效）：
 
 ![pink-theme 设置区块](docs/screenshots/settings.png)
-
-> 图中顶栏像素鲸鱼仍是宿主硬编码；底栏进度条、点火动画、正文链接与输入光标自 0.14.0 起跟随主题，见[宿主硬编码的部分](#宿主硬编码主题覆盖不到的部分)。
 
 ## 配置
 
@@ -117,24 +115,6 @@ dsh-TUI 没有向插件公开安全的终端查询接缝。为了不与宿主的
 - **旧宿主**：只在 `~/.dsh-tui/themes/` 缺少目标文件时复制，绝不覆盖你编辑过的 `pink-*.json`；宿主契约不认识 chrome 键时（< 0.14.0）写出的副本会自动去掉那 8 键——与 v0.7.3 的资产逐字节相同，因此不会每次启动都刷出「未知颜色键」告警。
 - **损坏文件是唯一例外**：无法解析为 JSON 的残文件（例如安装中途中断）会被改名为 `<文件名>.corrupt-<时间戳>` 保留现场，再重新安装内置副本，并记录一条警告、弹一条 toast。
 - **从旧宿主升级**：想改用运行时托管，请先备份再删除 `~/.dsh-tui/themes/pink-{night,day,ansi}.json`；插件不会自动删除用户文件。与内置副本完全相同的遗留文件会收到一次性提醒和确认对话框。
-
-## 宿主硬编码、主题覆盖不到的部分
-
-以下元素的颜色/形态仍由 dsh-TUI 宿主写死，不读任何主题键，主题 JSON 与插件接缝都无法覆盖（0.9.3 首测，0.11.0 逐条复核、0.11.2 复查，0.14.0 再次逐条核对）。**其中五项自 0.14.0 起已接入主题键，因此移出本表**：底栏五段进度条（`contextBarSystem/Prompt/Assistant/Thinking/Tools`）、点火波与 ❯ 前缀（`ignition`/`ignitionDim`）、进度条空余段的明暗判定（改用 `isLightThemeActive()`）、输入光标填充（`cursor`；键本身从此可设，但上游内置与插件都留空 = 反色块）、正文链接（改取当前主题的 `accent`，解析不出才回落 ANSI 蓝）。其余项仍需上游 dsh-TUI 修改；上游修复前，任何社区主题包都受同样约束。
-
-<details>
-<summary>展开完整清单（6 项，含宿主源码位置）</summary>
-
-| 元素 | 现状 | 位置（宿主源码） |
-| --- | --- | --- |
-| 输入框 ❯ 提示符（静止态） | 静止态无颜色参数（终端默认前景色，模型工作时变暗）；最高推理档的点火波、输入框扫光与 ❯ 前缀自 0.14.0 起取主题 `ignition`/`ignitionDim`——本插件三套均已设值（pink-ansi 给 hex：波形解析器不认 `ansi:*`，会给回改前的蓝白对） | `components/PromptInput.tsx`、`components/EffortChargeGlyph.tsx`、`components/EffortInputBorder.tsx`、`trajectory/effortIgnition.ts` |
-| 状态行文字颜色 | 旧路径标量状态行由宿主统一以无色 + 终端 dim 渲染；≥ 0.10.1 插件已改用 `tuiStatus.registerView` 富状态视图按主题配色，旧宿主自动回退标量路径 | `screens/Chat.tsx`、`dsh-adapter/status.ts` |
-| 顶栏像素鲸鱼颜色 | 调色板写死且模块加载时预渲染，任何主题都无法改变鲸鱼配色——0.9.3 为四色（描边/身体/腹部/嘴），0.10.x 起为六色（另有心形与睡眠 Z 两个状态色） | `components/Whale.tsx` |
-| 顶栏文字色 | ✦ 字标与欢迎语跟主题（`claude`，0.10.1 起 `accent`）；字标扫过时的**高光也跟主题**——`LogoV2` 把 `theme.accentShimmer`（0.10.1 起的键名，旧名 `claudeShimmer`）当高光色传给 `sweep()`，本插件三主题均已设值（可见时机仅开场与 `/deepseek` 重播的扫过瞬间）；`DEEPSEEK`/`HARNESS` 两个像素词与欢迎语的扫过高光仍写死为常量 `FLASH`，`HARNESS` 的渐变结尾段是固定常量 `PALE`，其余主色/渐变结尾色跟 `claude`/`claudeBlue_FOR_SYSTEM_SPINNER`（0.10.1 起 `accent`/`activity`）。另：宿主 `parseRGB` 只认 `rgb(r,g,b)`，hex/ansi 值静默回退固定品牌蓝（pink-ansi 因此顶栏仍为蓝色） | `components/LogoV2.tsx`、`components/bigfont.ts`、`components/shimmer.ts`、`components/Spinner/spinnerUtils.ts` |
-| 思考消息折叠头脉冲字 | 思考仍在流式输出时，折叠头行首的 spinner 字形在常量 `BRAND`→`ICE` 之间做正弦脉冲（minimal 模式直接去色）；同一行的标题文字才跟主题（hover 取 `text`，否则 dim） | `components/messages/AssistantThinkingMessage.tsx`、`components/shimmer.ts` |
-| 主界面组件与布局 | 顶栏鲸鱼、工具卡、输入框等宿主组件不可被插件替换或改布局——平台规则（内建优先，无组件替换接缝），主题能碰的只有颜色层 | 宿主架构约定 |
-
-</details>
 
 ## 卸载
 

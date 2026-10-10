@@ -55,7 +55,7 @@ All three pass the official dsh-TUI validator (zero warnings against the 0.14.0 
 
 ### Screenshots
 
-The main screen was captured on dsh-tui 0.9.2; the `/settings` card is from 0.9.3 (both predate the 0.14.0 chrome theme keys, so the footer bar, ignition animation and cursor in these shots still use the host's hardcoded colours):
+Captured on dsh-TUI 0.14.0 with this plugin at v0.7.5:
 
 | `pink-day` | `pink-night` |
 | :---: | :---: |
@@ -64,8 +64,6 @@ The main screen was captured on dsh-tui 0.9.2; the `/settings` card is from 0.9.
 The pink-theme block in `/settings` (background / blossom glyph / clock / turns / status-line scope; saves apply immediately):
 
 ![pink-theme settings block](docs/screenshots/settings.png)
-
-> Links and the header pixel whale are still hardcoded by the host; the footer bar, ignition animation and prompt cursor have followed the theme since 0.14.0 — see [Hardcoded by the host](#hardcoded-by-the-host-themes-cannot-cover).
 
 ## Configuration
 
@@ -117,24 +115,6 @@ The last row only ever concerns files byte-identical to the bundled copy — fil
 - **Older hosts**: files are copied into `~/.dsh-tui/themes/` only when missing; a `pink-*.json` you edited is never overwritten. When the host contract predates the chrome keys (< 0.14.0), the written copy drops those eight keys — byte-identical to the v0.7.3 asset, so no “unknown colour key” warning appears on every boot.
 - **Corrupted files are the one exception**: a file that cannot be parsed as JSON (say, a leftover from an interrupted install) is renamed to `<name>.corrupt-<timestamp>` to preserve the scene, the bundled copy is reinstalled, and the plugin logs a warning plus a toast.
 - **Upgrading from an older host**: to switch to runtime-managed themes, back up and delete `~/.dsh-tui/themes/pink-{night,day,ansi}.json` yourself — the plugin never deletes user files. Leftovers byte-identical to the bundled copy get a one-shot notice and confirmation dialog.
-
-## Hardcoded by the host (themes cannot cover)
-
-These elements are still hardcoded by dsh-TUI, read no theme key, and are out of reach for both theme JSON and plugin seams (first measured on 0.9.3, re-checked item by item on 0.11.0 and 0.11.2, and checked again on 0.14.0). **Five of them moved to theme keys in 0.14.0 and left this list**: the five footer context-bar segments (`contextBarSystem/Prompt/Assistant/Thinking/Tools`), the ignition wave and ❯ prefix (`ignition`/`ignitionDim`), the empty-segment light/dark judgement (now `isLightThemeActive()`), the prompt cursor fill (`cursor` — now settable, though both upstream's built-ins and this plugin leave it empty for the inverse-video caret) and body links (now the active palette's `accent`, falling back to ANSI blue only when it cannot be resolved). The rest still need upstream dsh-TUI changes; until then, every community theme package lives under the same constraints.
-
-<details>
-<summary>Show the full list (6 items, with host source locations)</summary>
-
-| Element | Current state | Location (host source) |
-| --- | --- | --- |
-| Prompt ❯ glyph (resting state) | No colour parameter while resting (terminal default foreground, dimmed while the model works); the top reasoning-effort ignition wave, the input-border sweep and the ❯ prefix take the theme's `ignition`/`ignitionDim` since 0.14.0 — all three bundled themes set them (pink-ansi uses hex: the waveform parser does not accept `ansi:*` and would fall back to the pre-theme blue pair) | `components/PromptInput.tsx`, `components/EffortChargeGlyph.tsx`, `components/EffortInputBorder.tsx`, `trajectory/effortIgnition.ts` |
-| Status-line text colour | On the legacy path the host renders scalar status lines colourless + terminal dim; since 0.10.1 the plugin uses the `tuiStatus.registerView` rich status view to colour by theme, and older hosts fall back to the scalar path | `screens/Chat.tsx`, `dsh-adapter/status.ts` |
-| Header pixel whale | Its palette is hardcoded and pre-rendered at module load; no theme can recolour the whale — four colours on 0.9.3 (outline/body/belly/mouth), six since 0.10.x (a heart and a sleep-Z state colour on top) | `components/Whale.tsx` |
-| Header text colours | The ✦ wordmark and welcome line follow the theme (`claude`, `accent` since 0.10.1), and the wordmark's sweep **highlight follows the theme too** — `LogoV2` passes `theme.accentShimmer` (the 0.10.1 key name, `claudeShimmer` before it) to `sweep()` as the highlight colour, and all three bundled themes set it (visible only during the opening sweep and a `/deepseek` replay). The `DEEPSEEK`/`HARNESS` pixel words and the welcome line keep the constant `FLASH` as their sweep highlight, `HARNESS` still ends its gradient on the fixed constant `PALE`, and the remaining main/gradient-end colours follow `claude`/`claudeBlue_FOR_SYSTEM_SPINNER` (`accent`/`activity` since 0.10.1). Also: the host's `parseRGB` accepts only `rgb(r,g,b)`, so hex/ansi values silently fall back to the fixed brand blue (hence pink-ansi keeps a blue header) | `components/LogoV2.tsx`, `components/bigfont.ts`, `components/shimmer.ts`, `components/Spinner/spinnerUtils.ts` |
-| Thinking-header pulse glyph | While the reasoning is still streaming, the spinner glyph at the head of the folded thinking header pulses between the constants `BRAND` and `ICE` (minimal mode drops the colour); only the label on the same row follows the theme (hover uses `text`, otherwise dim) | `components/messages/AssistantThinkingMessage.tsx`, `components/shimmer.ts` |
-| Main-screen components and layout | Header whale, tool cards, prompt box and friends cannot be replaced or re-laid-out by plugins — a platform rule (built-ins win, no component-replacement seam); themes only reach the colour layer | Host architecture convention |
-
-</details>
 
 ## Uninstall
 
