@@ -1,6 +1,6 @@
 {
   "name": "dsh-tui-theme",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Sakura-pink themes for dsh-TUI with optional cached background follow (pink-day/pink-night), a blossom status line, and a /settings section. No shortcuts, no commands.",
   "type": "module",
   "main": "lib/types/index.js",
@@ -69,7 +69,7 @@
     "@deepseek-ai/dsh-session": "0.2.0-rc.1",
     "@deepseek-ai/dsh-settings": "0.2.0-rc.1",
     "@deepseek-ai/schemastery": "^3.18.1",
-    "@deepseek-harness-tui/dsh-tui": "0.11.2",
+    "@deepseek-harness-tui/dsh-tui": "0.14.0",
     "@types/node": "^22.0.0",
     "semver": "^7.8.5",
     "tsx": "^4.23.12",

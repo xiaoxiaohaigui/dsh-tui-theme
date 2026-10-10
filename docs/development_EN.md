@@ -7,7 +7,7 @@ This page holds the development details kept out of the README: environment, ins
 ## Environment
 
 - Node `^22.19 || >=24`, pure ESM; TypeScript compiles to `lib/types/`, and the build output is committed — CI fails if it drifts from a fresh build.
-- Host baseline: the devDependency pins `@deepseek-harness-tui/dsh-tui@0.11.2` with the matching engine line at `0.2.0-rc.1`; the devDependency `dsh-settings` is the ≥ 0.1.7 Config-projection generation, so `verify:settings` really runs its projection assertions here (the legacy ≤ 0.1.6 path is covered by `verify.mjs` scenario 2 and by a manual `DSH_SETTINGS_DIR` run).
+- Host baseline: the devDependency pins `@deepseek-harness-tui/dsh-tui@0.14.0` (the first release carrying the eight chrome theme keys) with the matching engine line at `0.2.0-rc.1`; the devDependency `dsh-settings` is the ≥ 0.1.7 Config-projection generation, so `verify:settings` really runs its projection assertions here (the legacy ≤ 0.1.6 path is covered by `verify.mjs` scenario 2 and by a manual `DSH_SETTINGS_DIR` run).
 
 ## Install prerequisites
 
@@ -25,7 +25,7 @@ npm run verify           # plugin contract, theme validation, editable-surface c
 npm run verify:package   # release manifest (npm pack --dry-run)
 npm run verify:peers     # peer-coverage contract (every validated runtime must be covered)
 npm run verify:settings  # dsh-settings generation projection assertions (capability-probed; the older generation reports a skip and exits 0)
-npm run verify:host      # build + zero-config host verification (0.11.2)
+npm run verify:host      # build + zero-config host verification (0.14.0)
 npm run release:check    # build + verify + verify:package + verify:peers + verify:settings
 ```
 
@@ -33,7 +33,7 @@ After touching `devDependencies` / `overrides`, delete `node_modules` and instal
 
 ## Pointing at another host version
 
-`verify:host` uses the devDependency dsh-TUI (currently 0.11.2) for zero-config verification — no local host checkout needed. To verify an older release or a release baseline, point it at the matching host adapter and source; set `DSH_TUI_EXPECTED_VERSION` as well to pin the version:
+`verify:host` uses the devDependency dsh-TUI (currently 0.14.0) for zero-config verification — no local host checkout needed. To verify an older release or a release baseline, point it at the matching host adapter and source; set `DSH_TUI_EXPECTED_VERSION` as well to pin the version:
 
 ```sh
 DSH_TUI_ADAPTER_DIR=/path/to/dsh-TUI/lib/types/dsh-adapter \
@@ -54,7 +54,9 @@ DSH_SETTINGS_DIR=/path/to/dsh-settings-0.1.5 npm run verify:host
 DSH_SETTINGS_DIR="$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh-settings" npm run verify:settings
 ```
 
-CI only covers the 0.11.2 zero-config line; 0.9.x compatibility regressions still need a local run with the env vars above pointing at the matching host worktree. The host baseline itself (devDependency vs CI's `DSH_TUI_EXPECTED_VERSION`) is guarded by `verify:peers`: it fails when the two disagree.
+CI only covers the 0.14.0 zero-config line; 0.9.x compatibility regressions still need a local run with the env vars above pointing at the matching host worktree. The host baseline itself (devDependency vs CI's `DSH_TUI_EXPECTED_VERSION`) is guarded by `verify:peers`: it fails when the two disagree.
+
+Pointing at a host older than 0.14.0 needs no plugin change: the host-version gate in `src/hostContract.ts` makes both the runtime registration and the static copies fall back to the palettes without the eight chrome keys (byte-identical to the v0.7.3 assets), and `runtime-themes-headless.mjs` / `validate-themes-against-host.mjs` pick the matching form from the host's actual contract, each printing one line (`host chrome keys: predate the contract (withheld)` / `validating the withheld (pre-0.14.0) form`).
 
 ## CI gates
 

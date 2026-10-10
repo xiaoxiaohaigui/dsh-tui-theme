@@ -46,7 +46,14 @@ const sandboxThemes = join(sandboxHome, '.dsh-tui', 'themes')
 const { name, apply, Config } = await import('../lib/types/index.js')
 const { LIVE_CONFIG_KEYS, hasLiveConfigFields, readConfigValues } = await import('../lib/types/liveConfig.js')
 const { resolveSettingsNamespace, SETTINGS_NS } = await import('../lib/types/settingsSection.js')
-const { installBundledThemes, readBundledThemes, findShadowedBundledThemes } = await import('../lib/types/themeAssets.js')
+const { installBundledThemes, readBundledThemes, removeBundledThemes, findShadowedBundledThemes } = await import('../lib/types/themeAssets.js')
+const {
+  CHROME_THEME_KEYS,
+  hostSupportsChromeKeys,
+  hostThemeVersion,
+  setChromeKeySupportForTests,
+  withoutChromeKeys,
+} = await import('../lib/types/hostContract.js')
 const { startStatusLine, invalidateThemePrefCacheForTests } = await import('../lib/types/statusLine.js')
 const { setToastRetryDelaysForTests } = await import('../lib/types/toast.js')
 const {
@@ -406,6 +413,47 @@ const emit = (record, event, ...args) => {
   console.log('✓ hostile runtime service: registration failures warn, never propagate')
 }
 
+// ── 2e. chrome-key gate: the eight contract additions follow the host ───────
+{
+  // The gate reads the host manifest this repo pins. A resolution failure would
+  // silently downgrade every palette, so the baseline is asserted, not trusted.
+  const hostManifest = JSON.parse(readFileSync(require.resolve('@deepseek-harness-tui/dsh-tui/package.json'), 'utf8'))
+  assert.equal(hostThemeVersion(), hostManifest.version, 'the gate must read the installed host manifest')
+  assert.equal(hostManifest.version, '0.14.0', 'the repo baseline is the first release carrying the chrome keys')
+  assert.equal(hostSupportsChromeKeys(), true, 'the pinned baseline accepts the chrome keys')
+
+  // A pre-0.14.0 host rejects a whole descriptor over one unknown key, so the
+  // gate withholds all eight and keeps every other palette entry.
+  setChromeKeySupportForTests(false)
+  try {
+    const registrations = []
+    const themes = { register(descriptor, identity) { registrations.push([descriptor, identity]); return () => {} } }
+    const { ctx, record } = makeStubCtx({ themes })
+    await applyAndSettle(ctx)
+    const bundled = readBundledThemes()
+    assert.equal(registrations.length, 3, 'all three themes must still register on an old host')
+    for (const [descriptor] of registrations) {
+      const source = bundled.find(theme => theme.name === descriptor.name)
+      assert.notEqual(source, undefined, 'every registration matches a bundled theme')
+      assert.equal(
+        CHROME_THEME_KEYS.some(key => key in descriptor.colors),
+        false,
+        `${descriptor.name} must withhold every chrome key`,
+      )
+      assert.deepEqual(descriptor.colors, withoutChromeKeys(source.colors), 'every other key survives the downgrade')
+      assert.equal(Object.keys(descriptor.colors).length, 95, 'the withheld palette is the v0.7.3 key set')
+    }
+    assert.equal(
+      record.infos.some(line => line.includes('predates the chrome theme keys')),
+      true,
+      'a downgraded palette is reported once, never silent',
+    )
+  } finally {
+    setChromeKeySupportForTests(undefined)
+  }
+  console.log('✓ chrome-key gate: full palette on 0.14.0, withheld 95-key palette on older hosts')
+}
+
 // ── 2d. live-config marking: the card and the marked Config keys are one set ─
 {
   // The marker is what a ≥0.1.7 host projects (`volatileForm`), and the card's
@@ -616,6 +664,37 @@ const emit = (record, event, ...args) => {
   assert.deepEqual(third.installed, [])
   assert.equal(JSON.parse(readFileSync(userFile, 'utf8')).colors.text, '#123456')
   console.log('✓ reinstall: skips existing files, never overwrites user edits')
+}
+
+// ── 3b. static assets follow the same gate, and both forms stay owned ───────
+{
+  rmSync(sandboxThemes, { recursive: true, force: true })
+  const files = ['pink-night.json', 'pink-day.json', 'pink-ansi.json']
+  setChromeKeySupportForTests(false)
+  try {
+    assert.equal(installBundledThemes().installed.length, 3)
+    const fullTexts = new Map()
+    for (const file of files) {
+      const written = readFileSync(join(sandboxThemes, file), 'utf8')
+      const full = readFileSync(join(pluginRoot, 'themes', file), 'utf8')
+      fullTexts.set(file, full)
+      const colors = JSON.parse(written).colors
+      assert.equal(CHROME_THEME_KEYS.some(key => key in colors), false, `${file} must withhold every chrome key`)
+      assert.equal(Object.keys(colors).length, 95, `${file} must install the v0.7.3 key set`)
+      // Byte fidelity matters twice over: the host's per-key parser is spared
+      // eight warnings per boot, and the file is the exact asset v0.7.3 shipped.
+      assert.equal(written, `${JSON.stringify(JSON.parse(written), null, 2)}\n`, `${file} keeps the bundled formatting`)
+    }
+    // A file from the full-fidelity era is still this plugin's copy, so a host
+    // upgrade cannot leave a stale palette shadowing the registry unnoticed.
+    writeFileSync(join(sandboxThemes, 'pink-night.json'), fullTexts.get('pink-night.json'))
+    assert.deepEqual(findShadowedBundledThemes().sort(), [...files].sort(), 'both text forms count as ours')
+    assert.deepEqual(removeBundledThemes(files).sort(), [...files].sort(), 'both text forms stay removable')
+    assert.equal(existsSync(sandboxThemes), false, 'removing the last owned file removes the empty directory')
+  } finally {
+    setChromeKeySupportForTests(undefined)
+  }
+  console.log('✓ static assets: withheld on old hosts, and 0.7.3-era files stay recognised')
 }
 
 // ── 4. autoInstallThemes: false on a clean sandbox ──────────────────────────

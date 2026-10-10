@@ -38,16 +38,16 @@ jobs:
           fi
       - run: node scripts/verify-package.mjs
 
-  # 完整验证档：零配置使用 devDependency 里钉住的 dsh-TUI（0.11.2）与同代
-  # 引擎包（0.2.0-rc.1），不需要本地宿主源码检出。0.9.x 兼容回归仍留在发版前的
-  # 本机门禁（REVIEW.md G4/R-011）。
+  # 完整验证档：零配置使用 devDependency 里钉住的 dsh-TUI（0.14.0，第一个
+  # 含 chrome 8 键契约的发版）与同代引擎包（0.2.0-rc.1），不需要本地宿主源码
+  # 检出。0.9.x 兼容回归仍留在发版前的本机门禁（REVIEW.md G4/R-011）。
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       # 该变量一旦存在值 production，npm 会静默省略 devDependencies（G2）。
       NODE_ENV: development
-      DSH_TUI_EXPECTED_VERSION: 0.11.2
+      DSH_TUI_EXPECTED_VERSION: 0.14.0
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

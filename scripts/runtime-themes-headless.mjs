@@ -54,6 +54,7 @@ const mountPlugin = async app => {
   return { context: admitted.context, fiber: admitted.fiber, manual: false }
 }
 const pink = await import(pathToFileURL(join(pluginRoot, 'lib', 'types', 'index.js')).href)
+const { CHROME_THEME_KEYS } = await import(pathToFileURL(join(pluginRoot, 'lib', 'types', 'hostContract.js')).href)
 const { SETTINGS_NAMESPACE } = await import(pathToFileURL(join(pluginRoot, 'scripts', 'expected-settings-contract.mjs')).href)
 
 const app = new Context()
@@ -75,7 +76,15 @@ assert.deepEqual(snapshot.map(entry => entry.name).sort(), ['pink-ansi', 'pink-d
 // dsh-TUI >= 0.10.1 semantic-rename sentinel: the host normalizes legacy keys
 // at admission (aliases map to canonical names, retired keys are dropped),
 // while pre-0.10.1 hosts snapshot the descriptor colors verbatim.
+//
+// The chrome keys are contract additions the plugin withholds from hosts that
+// predate them (src/hostContract.ts), so each side asserts its own expectation:
+// where the host contract knows the keys they must arrive verbatim, and where
+// it does not they must be absent — a host that receives one unknown key
+// rejects the whole descriptor, which is what this phase exists to catch.
 const semanticKeys = 'accent' in themeModule.getTheme('dark')
+const hostKnowsChromeKeys = CHROME_THEME_KEYS.every(key => key in themeModule.getTheme('dark'))
+console.log(`* host chrome keys: ${hostKnowsChromeKeys ? 'carried by the contract' : 'predate the contract (withheld)'}`)
 for (const entry of snapshot) {
   const expected = JSON.parse(readFileSync(join(pluginRoot, 'themes', `${entry.name}.json`), 'utf8'))
   assert.equal(entry.displayName, expected.displayName)
@@ -92,9 +101,18 @@ for (const entry of snapshot) {
     assert.equal('rainbow_red' in entry.colors, false, 'retired keys are dropped at admission')
     assert.equal(host.resolve(entry.name).accent, expected.colors.claude)
     assert.equal(themeModule.getTheme(entry.name).accent, expected.colors.claude)
+    for (const key of CHROME_THEME_KEYS) {
+      if (hostKnowsChromeKeys) {
+        assert.equal(entry.colors[key], expected.colors[key], `${entry.name}.${key} must register verbatim`)
+      } else {
+        assert.equal(key in entry.colors, false, `${entry.name}.${key} must be withheld from this host`)
+      }
+    }
   } else {
-    assert.deepEqual(entry.colors, expected.colors)
-    assert.deepEqual(host.resolve(entry.name), { ...themeModule.getTheme(entry.base), ...expected.colors })
+    const expectedColors = { ...expected.colors }
+    if (!hostKnowsChromeKeys) for (const key of CHROME_THEME_KEYS) delete expectedColors[key]
+    assert.deepEqual(entry.colors, expectedColors)
+    assert.deepEqual(host.resolve(entry.name), { ...themeModule.getTheme(entry.base), ...expectedColors })
     assert.equal(themeModule.getTheme(entry.name).claude, expected.colors.claude)
   }
 }

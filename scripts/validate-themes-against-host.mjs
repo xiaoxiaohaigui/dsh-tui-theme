@@ -105,6 +105,32 @@ assert.deepEqual(
 // guarantee, so the count is reported instead of pinned to a hardcoded floor.
 console.log(`* host Theme key count: ${allKeys.length} (coverage asserted per key)`)
 
+// The eight chrome keys are contract additions (upstream PR #1260, first
+// released in dsh-TUI 0.14.0). On an older host the plugin withholds them
+// (src/hostContract.ts) — a runtime descriptor carrying one unknown key is
+// rejected whole — so this validator must feed the host the same withheld
+// text the plugin installs, or it would report a gap the plugin never ships.
+const { CHROME_THEME_KEYS, withoutChromeKeys } = await import(
+  pathToFileURL(join(pluginRoot, 'lib', 'types', 'hostContract.js')).href
+)
+const hostKnowsChromeKeys = CHROME_THEME_KEYS.every(key => allKeys.includes(key))
+console.log(
+  hostKnowsChromeKeys
+    ? '* host contract carries the chrome keys; validating the bundled files as-is'
+    : '* host contract predates the chrome keys; validating the withheld (pre-0.14.0) form',
+)
+
+/**
+ * The exact text this plugin installs for the host under validation.
+ */
+function themeTextForHost(file) {
+  const text = readFileSync(join(themesDir, file), 'utf8')
+  if (hostKnowsChromeKeys) return text
+  const parsed = JSON.parse(text)
+  parsed.colors = withoutChromeKeys(parsed.colors)
+  return `${JSON.stringify(parsed, null, 2)}\n`
+}
+
 // The color keys the host's /settings screen paints with (screens/Settings.tsx
 // at the pinned baseline: promptBorder card frame, permission card title,
 // selectionBg focused row, suggestion/error/success/inactive/subtle row text
@@ -158,7 +184,7 @@ for (const file of readdirSync(themesDir).filter(name => name.endsWith('.json'))
   console.warn = message => warnings.push(String(message))
   let spec
   try {
-    spec = parseCustomTheme(readFileSync(join(themesDir, file), 'utf8'), file)
+    spec = parseCustomTheme(themeTextForHost(file), file)
   } finally {
     console.warn = originalWarn
   }

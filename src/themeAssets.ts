@@ -3,8 +3,11 @@
  *
  * Copies the package's themes/*.json into ~/.dsh-tui/themes/ on boot. Only
  * files that do not exist yet are written — a user's edited or same-named
- * theme file is never overwritten. The one exception is a target that no
- * longer parses as JSON (a torn write from an interrupted installation):
+ * theme file is never overwritten. What gets written is the host-appropriate
+ * form of the asset (see bundledThemeForms): a host that predates the chrome
+ * keys receives the v0.7.3 byte layout instead of per-key warnings. The one
+ * exception to the never-overwrite rule is a target that no longer parses as
+ * JSON (a torn write from an interrupted installation):
  * that file is backed up under a .corrupt-<timestamp> name and replaced, so
  * a crash can never shadow a bundled theme forever. Every failure is
  * contained per file: a theme garnish must never break the TUI's boot.
@@ -15,6 +18,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CHROME_THEME_KEYS, hostSupportsChromeKeys, withoutChromeKeys } from './hostContract.js'
 
 export interface ThemeInstallResult {
   /** Files newly written into the target directory. */
@@ -104,6 +108,48 @@ export function readBundledThemes(sourceDir: string = bundledThemesDir()): Bundl
 }
 
 /**
+ * How one bundled theme file presents itself to the host in use.
+ *
+ * `write` is the text this plugin installs: the bundled file as-is, except on
+ * a host that predates the chrome keys (hostContract.ts), where those eight
+ * keys are withheld — the static parser would otherwise warn per key on every
+ * boot, and a runtime-registered descriptor carrying them is rejected whole.
+ * The withheld text is the exact byte layout the plugin published as v0.7.3.
+ *
+ * `copies` lists every text form that still counts as this plugin's own copy
+ * for the byte-identical checks (removal after runtime confirmation, shadow
+ * detection). It holds both forms so a file left by an older plugin release
+ * stays recognisable after a host upgrade — losing that would silently let a
+ * stale 73-key file shadow the registry forever.
+ */
+function bundledThemeForms(file: string, sourceDir: string): { write: string; copies: string[] } {
+  const text = readFileSync(join(sourceDir, file), 'utf8')
+  const withheld = stripChromeKeys(text)
+  if (hostSupportsChromeKeys() || withheld === undefined) return { write: text, copies: [text] }
+  return { write: withheld, copies: [withheld, text] }
+}
+
+/**
+ * Re-serialize a theme file without the chrome keys, preserving the bundled
+ * formatting (`JSON.stringify(parsed, null, 2)` plus a trailing newline), so
+ * the withheld text is byte-identical to the 0.7.3 assets. Returns undefined
+ * for text that cannot be parsed or carries none of the keys.
+ */
+function stripChromeKeys(text: string): string | undefined {
+  try {
+    const parsed = JSON.parse(text) as { colors?: Record<string, unknown> }
+    if (parsed === null || typeof parsed !== 'object') return undefined
+    const colors = parsed.colors
+    if (colors === null || typeof colors !== 'object' || Array.isArray(colors)) return undefined
+    if (!CHROME_THEME_KEYS.some(key => Object.prototype.hasOwnProperty.call(colors, key))) return undefined
+    parsed.colors = withoutChromeKeys(colors as Record<string, string>)
+    return `${JSON.stringify(parsed, null, 2)}\n`
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Install every bundled theme JSON that the target directory is missing.
  * @param targetDir - Destination directory (defaults to ~/.dsh-tui/themes).
  * @param sourceDir - Bundled assets (defaults to this package's themes/).
@@ -128,7 +174,7 @@ export function installBundledThemes(
   for (const file of files) {
     const target = join(targetDir, file)
     try {
-      const text = readFileSync(join(sourceDir, file), 'utf8')
+      const text = bundledThemeForms(file, sourceDir).write
       JSON.parse(text) // our own asset, but never write a corrupt file out
       mkdirSync(targetDir, { recursive: true })
       try {
@@ -164,9 +210,9 @@ export function removeBundledThemes(
   const removed: string[] = []
   for (const file of files) {
     try {
-      const bundled = readFileSync(join(sourceDir, file), 'utf8')
+      const bundled = bundledThemeForms(file, sourceDir).copies
       const target = join(targetDir, file)
-      if (readFileSync(target, 'utf8') !== bundled) continue
+      if (!bundled.includes(readFileSync(target, 'utf8'))) continue
       unlinkSync(target)
       removed.push(file)
     } catch {
@@ -205,7 +251,8 @@ export function findShadowedBundledThemes(
   }
   for (const file of files) {
     try {
-      if (readFileSync(join(targetDir, file), 'utf8') === readFileSync(join(sourceDir, file), 'utf8')) {
+      const copies = bundledThemeForms(file, sourceDir).copies
+      if (copies.includes(readFileSync(join(targetDir, file), 'utf8'))) {
         shadowed.push(file)
       }
     } catch {

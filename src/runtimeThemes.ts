@@ -2,6 +2,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { TuiThemeDescriptor } from '@deepseek-harness-tui/dsh-tui/extensions'
+import { hostSupportsChromeKeys, hostThemeVersion, withoutChromeKeys } from './hostContract.js'
 import { readBundledThemes } from './themeAssets.js'
 
 interface TuiThemesLike {
@@ -17,6 +18,16 @@ export function startRuntimeThemes(ctx: Context, onAvailable?: () => void): void
   ctx.inject(['tuiThemes'], themesCtx => {
     onAvailable?.()
     const themes = (themesCtx as Context & { tuiThemes: TuiThemesLike }).tuiThemes
+    // The host rejects a whole descriptor over one unknown key, so a palette
+    // must never carry a key its contract lacks (hostContract.ts). Pre-0.14.0
+    // hosts get the palettes without the eight chrome keys; logged once so a
+    // palette downgrade is never mistaken for a broken registration.
+    const chromeKeys = hostSupportsChromeKeys()
+    if (!chromeKeys) {
+      themesCtx.logger.info(
+        `dsh-tui-theme: host ${hostThemeVersion() ?? 'unknown'} predates the chrome theme keys (dsh-TUI 0.14.0); registering the palettes without them`,
+      )
+    }
     const disposers: Array<() => void> = []
     for (const bundled of readBundledThemes()) {
       try {
@@ -25,7 +36,7 @@ export function startRuntimeThemes(ctx: Context, onAvailable?: () => void): void
             name: bundled.name,
             ...(bundled.displayName === undefined ? {} : { displayName: bundled.displayName }),
             base: bundled.base,
-            colors: bundled.colors as TuiThemeDescriptor['colors'],
+            colors: (chromeKeys ? bundled.colors : withoutChromeKeys(bundled.colors)) as TuiThemeDescriptor['colors'],
           },
           themesCtx,
         )

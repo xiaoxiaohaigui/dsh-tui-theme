@@ -47,15 +47,15 @@ dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-<版本号>.tgz
 
 | 主题 | 基底 | 风格 |
 | --- | --- | --- |
-| `pink-night` 夜樱 | dark | 暗梅底、玫瑰粉强调；全键覆盖宿主 Theme（0.10.x 为 73 语义键，旧键名经宿主别名映射兼容） |
+| `pink-night` 夜樱 | dark | 暗梅底、玫瑰粉强调；全键覆盖宿主 Theme 契约（0.14.0 为 81 语义键，旧键名经宿主别名映射兼容；更老宿主自动退回 73 键版调色板，见[兼容性](#兼容性)） |
 | `pink-day` 昼樱 | light | 象牙粉底、墨梅正文、柔和玫瑰强调（通过宿主浅色身份判定） |
 | `pink-ansi` 樱·ANSI | dark-ansi | 16 色 ANSI 回退，品牌色映射到 magenta 系 |
 
-三套均通过 dsh-TUI 官方校验器（零警告、全键覆盖）与 WCAG 对比度检查（正文 ≥ 11:1）。
+三套均通过 dsh-TUI 官方校验器（对 0.14.0 契约零警告、全键覆盖）与 WCAG 对比度检查（正文 ≥ 11:1）。
 
 ### 截图
 
-主题主界面实测于 dsh-tui 0.9.2，`/settings` 卡片界面来自 0.9.3：
+主题主界面实测于 dsh-tui 0.9.2，`/settings` 卡片界面来自 0.9.3（截图早于 0.14.0 的 chrome 主题键，图中的底栏进度条、点火动画与光标当时仍是宿主写死的配色）：
 
 | 昼樱 `pink-day` | 夜樱 `pink-night` |
 | :---: | :---: |
@@ -65,7 +65,7 @@ dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-<版本号>.tgz
 
 ![pink-theme 设置区块](docs/screenshots/settings.png)
 
-> 图中 ❯ 提示符与链接是宿主硬编码的，见[宿主硬编码的部分](#宿主硬编码主题覆盖不到的部分)。
+> 图中链接与顶栏像素鲸鱼仍是宿主硬编码；底栏进度条、点火动画与输入光标自 0.14.0 起跟随主题，见[宿主硬编码的部分](#宿主硬编码主题覆盖不到的部分)。
 
 ## 配置
 
@@ -114,24 +114,21 @@ dsh-TUI 没有向插件公开安全的终端查询接缝。为了不与宿主的
 ## 主题文件：安装、自愈与清理
 
 - **运行时宿主（≥ 0.10.0）**：三套主题经 `ctx.tuiThemes` 即时注册，调色板随插件生效，正常挂载不写用户目录；若服务晚到，插件先同步回退到静态路径，确认运行时服务后删除本次写入且仍未被改写的文件。
-- **旧宿主**：只在 `~/.dsh-tui/themes/` 缺少目标文件时复制，绝不覆盖你编辑过的 `pink-*.json`。
+- **旧宿主**：只在 `~/.dsh-tui/themes/` 缺少目标文件时复制，绝不覆盖你编辑过的 `pink-*.json`；宿主契约不认识 chrome 键时（< 0.14.0）写出的副本会自动去掉那 8 键——与 v0.7.3 的资产逐字节相同，因此不会每次启动都刷出「未知颜色键」告警。
 - **损坏文件是唯一例外**：无法解析为 JSON 的残文件（例如安装中途中断）会被改名为 `<文件名>.corrupt-<时间戳>` 保留现场，再重新安装内置副本，并记录一条警告、弹一条 toast。
 - **从旧宿主升级**：想改用运行时托管，请先备份再删除 `~/.dsh-tui/themes/pink-{night,day,ansi}.json`；插件不会自动删除用户文件。与内置副本完全相同的遗留文件会收到一次性提醒和确认对话框。
 
 ## 宿主硬编码、主题覆盖不到的部分
 
-以下元素的颜色/形态由 dsh-TUI 宿主硬编码，不读任何主题键，主题 JSON 与插件接缝都无法覆盖（0.9.3 首测，0.11.0 逐条复核、0.11.2 复查，其中「顶栏文字色」一项的表述已更正）。这些都需要上游 dsh-TUI 修改（例如把充能色/进度条分段色接入主题键、空余段判断改用 `isLightThemeActive()`、给输入光标增加主题键）；上游修复前，任何社区主题包都受同样约束。
+以下元素的颜色/形态仍由 dsh-TUI 宿主写死，不读任何主题键，主题 JSON 与插件接缝都无法覆盖（0.9.3 首测，0.11.0 逐条复核、0.11.2 复查，0.14.0 再次逐条核对）。**其中四项自 0.14.0 起已接入主题键，因此移出本表**：底栏五段进度条（`contextBarSystem/Prompt/Assistant/Thinking/Tools`）、点火波与 ❯ 前缀（`ignition`/`ignitionDim`）、进度条空余段的明暗判定（改用 `isLightThemeActive()`）、输入光标填充（`cursor`）。其余项仍需上游 dsh-TUI 修改；上游修复前，任何社区主题包都受同样约束。
 
 <details>
-<summary>展开完整清单（10 项，含宿主源码位置）</summary>
+<summary>展开完整清单（7 项，含宿主源码位置）</summary>
 
 | 元素 | 现状 | 位置（宿主源码） |
 | --- | --- | --- |
-| 输入框 ❯ 提示符 | 默认态无颜色参数（终端默认前景色，模型工作时变暗）；最高推理档充能动画用写死的蓝色 ramp（深 `#82B9FF` / 浅 `#1E5FEB`） | `EffortChargeGlyph.tsx`、`trajectory/effortIgnition.ts` |
-| 底栏上下文进度条分段色 | system / prompt / assistant / thinking / tools 五段为写死的藏青→品牌蓝（`#22305F`→`#5A7CFF`），永不随主题变化 | `screens/StatusMetrics.ts` |
-| 进度条空余段配色 | 宿主按 `themeName === 'light'` 字符串比较取浅色配色——自定义浅色主题（如 pink-day）不等于 `'light'`，会拿到偏深的空余段 | `screens/StatusLine.tsx` |
+| 输入框 ❯ 提示符（静止态） | 静止态无颜色参数（终端默认前景色，模型工作时变暗）；最高推理档的点火波、输入框扫光与 ❯ 前缀自 0.14.0 起取主题 `ignition`/`ignitionDim`——本插件三套均已设值（pink-ansi 给 hex：波形解析器不认 `ansi:*`，会给回改前的蓝白对） | `components/PromptInput.tsx`、`components/EffortChargeGlyph.tsx`、`components/EffortInputBorder.tsx`、`trajectory/effortIgnition.ts` |
 | 状态行文字颜色 | 旧路径标量状态行由宿主统一以无色 + 终端 dim 渲染；≥ 0.10.1 插件已改用 `tuiStatus.registerView` 富状态视图按主题配色，旧宿主自动回退标量路径 | `screens/Chat.tsx`、`dsh-adapter/status.ts` |
-| 输入框块状光标 | 宿主隐藏终端原生光标，输入框光标由应用以反色字符自绘，颜色即主题 text/background 的反色；OSC 12 只能染到不可见的原生光标（辅助功能模式 `CLAUDE_CODE_ACCESSIBILITY=1` 下原生光标才可见） | `ink/components/App.tsx`、`components/PromptInput.tsx` |
 | 正文链接 | OSC 8 超链接默认写死的 ANSI 蓝（`chalk.blue`）；注释说明 wrap-ansi 无法跨 OSC 8 保留主题 RGB 色，故链接色不读主题键 | `cc/hyperlink.ts` |
 | 顶栏像素鲸鱼颜色 | 调色板写死且模块加载时预渲染，任何主题都无法改变鲸鱼配色——0.9.3 为四色（描边/身体/腹部/嘴），0.10.x 起为六色（另有心形与睡眠 Z 两个状态色） | `components/Whale.tsx` |
 | 顶栏文字色 | ✦ 字标与欢迎语跟主题（`claude`，0.10.1 起 `accent`）；字标扫过时的**高光也跟主题**——`LogoV2` 把 `theme.accentShimmer`（0.10.1 起的键名，旧名 `claudeShimmer`）当高光色传给 `sweep()`，本插件三主题均已设值（可见时机仅开场与 `/deepseek` 重播的扫过瞬间）；`DEEPSEEK`/`HARNESS` 两个像素词与欢迎语的扫过高光仍写死为常量 `FLASH`，`HARNESS` 的渐变结尾段是固定常量 `PALE`，其余主色/渐变结尾色跟 `claude`/`claudeBlue_FOR_SYSTEM_SPINNER`（0.10.1 起 `accent`/`activity`）。另：宿主 `parseRGB` 只认 `rgb(r,g,b)`，hex/ansi 值静默回退固定品牌蓝（pink-ansi 因此顶栏仍为蓝色） | `components/LogoV2.tsx`、`components/bigfont.ts`、`components/shimmer.ts`、`components/Spinner/spinnerUtils.ts` |
@@ -155,6 +152,7 @@ rm ~/.dsh-tui/theme-follow.json
 ## 兼容性
 
 - **dsh-TUI 下限 0.8.8**（状态行与设置面板，0.9.3 实测）。0.10.0 及更新版本使用运行时主题注册；0.10.1 起状态行走富状态视图按主题配色（更旧宿主自动回退无色标量行）；缺 `dsh-tui-extensions` 扩展面的宿主自动降级为「仅安装三套主题」，不报错。
+- **主题的 8 个 chrome 键需要 dsh-TUI ≥ 0.14.0**（上游 PR #1260 的契约扩展：底栏五段 `contextBar*`、点火 `ignition`/`ignitionDim`、光标 `cursor`）。插件按宿主版本自动取舍：0.14.0 及更新版本拿到全键调色板；更老宿主拿到去掉这 8 键的版本——宿主的运行时准入遇到一个未知键会**整份拒绝**描述符（三套主题一起消失），静态文件路径则会逐键告警。降级只影响这些 chrome 元素的配色（保持宿主原样），不影响主题本身，插件日志里各记一行。
 - **`dsh-settings` 两代都支持**：≤ 0.1.6（dsh-TUI 0.9.x/0.10.x）走插件注册命名空间 + `scope.watch`；≥ 0.1.7（dsh-TUI 0.11+）走 Config volatile 字段投影 + `loader/volatile-update` 重读。判定按能力探测，不解析版本号；两条路径的失败都写日志而不是静默。
 - **dsh 运行时 `0.2.0-rc.1` 起有启动期 peer 校验**：宿主读 bundle 的 `peerDependencies`，把 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 段与运行时版本比对，不匹配就跳过整个 bundle（stderr 提示 `skipping profile bundle`）。本插件的 peer 段覆盖 `0.1.0-rc.6`–`0.1.x` 与 `0.2.0-rc.1`–`0.2.x`（自 v0.7.3 起，新世代写作 `^0.2.0-rc.1`），因此 0.2 宿主正常加载。宿主校验固定用 `includePrerelease` 语义，故 0.2 线的预发布档同样放行；而 npm 默认预发布语义更窄，将来出现的 `0.2.1-rc.x` 之类档位在 npm 侧会报 unmet peer（框架包由 dsh CLI 提供、profile 不装 `@deepseek-ai/*`，实际不受影响）。
 - Node `^22.19 || >=24`，纯 ESM，MIT。

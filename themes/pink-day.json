@@ -97,6 +97,14 @@
     "subagentToolName": "#D5517F",
     "subagentStatusRunning": "#D5517F",
     "subagentStatusCompleted": "#3E9468",
-    "subagentStatusFailed": "#C24D5C"
+    "subagentStatusFailed": "#C24D5C",
+    "contextBarSystem": "#6E1B3C",
+    "contextBarPrompt": "#9B2C55",
+    "contextBarAssistant": "#C24D78",
+    "contextBarThinking": "#E879A0",
+    "contextBarTools": "#EE8FB0",
+    "ignition": "#B03A63",
+    "ignitionDim": "#FFE3EC",
+    "cursor": "#E879A0"
   }
 }

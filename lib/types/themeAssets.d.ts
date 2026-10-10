@@ -3,8 +3,11 @@
  *
  * Copies the package's themes/*.json into ~/.dsh-tui/themes/ on boot. Only
  * files that do not exist yet are written — a user's edited or same-named
- * theme file is never overwritten. The one exception is a target that no
- * longer parses as JSON (a torn write from an interrupted installation):
+ * theme file is never overwritten. What gets written is the host-appropriate
+ * form of the asset (see bundledThemeForms): a host that predates the chrome
+ * keys receives the v0.7.3 byte layout instead of per-key warnings. The one
+ * exception to the never-overwrite rule is a target that no longer parses as
+ * JSON (a torn write from an interrupted installation):
  * that file is backed up under a .corrupt-<timestamp> name and replaced, so
  * a crash can never shadow a bundled theme forever. Every failure is
  * contained per file: a theme garnish must never break the TUI's boot.

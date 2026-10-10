@@ -47,15 +47,15 @@ Upgrading is the same command again: `dsh plugin --profile dsh-tui add -w dsh-tu
 
 | Theme | Base | Look |
 | --- | --- | --- |
-| `pink-night` | dark | Dark plum background, rose-pink accents; covers every host Theme key (73 semantic keys on 0.10.x, older names mapped by host aliases) |
+| `pink-night` | dark | Dark plum background, rose-pink accents; covers every host Theme key (81 semantic keys on 0.14.0, older names mapped by host aliases; older hosts automatically receive the 73-key palettes — see [Compatibility](#compatibility)) |
 | `pink-day` | light | Ivory-pink background, ink-plum text, soft rose accents (passes the host's light-identity check) |
 | `pink-ansi` | dark-ansi | 16-colour ANSI fallback, brand colours mapped to the magenta family |
 
-All three pass the official dsh-TUI validator (zero warnings, full key coverage) and WCAG contrast checks (body text ≥ 11:1).
+All three pass the official dsh-TUI validator (zero warnings and full key coverage against the 0.14.0 contract) and WCAG contrast checks (body text ≥ 11:1).
 
 ### Screenshots
 
-The main screen was captured on dsh-tui 0.9.2; the `/settings` card is from 0.9.3:
+The main screen was captured on dsh-tui 0.9.2; the `/settings` card is from 0.9.3 (both predate the 0.14.0 chrome theme keys, so the footer bar, ignition animation and cursor in these shots still use the host's hardcoded colours):
 
 | `pink-day` | `pink-night` |
 | :---: | :---: |
@@ -65,7 +65,7 @@ The pink-theme block in `/settings` (background / blossom glyph / clock / turns 
 
 ![pink-theme settings block](docs/screenshots/settings.png)
 
-> The ❯ prompt and link colour in these shots are hardcoded by the host — see [Hardcoded by the host](#hardcoded-by-the-host-themes-cannot-cover).
+> Links and the header pixel whale are still hardcoded by the host; the footer bar, ignition animation and prompt cursor have followed the theme since 0.14.0 — see [Hardcoded by the host](#hardcoded-by-the-host-themes-cannot-cover).
 
 ## Configuration
 
@@ -114,24 +114,21 @@ The last row only ever concerns files byte-identical to the bundled copy — fil
 ## Theme files: install, self-repair, cleanup
 
 - **Runtime hosts (≥ 0.10.0)**: the three themes register live through `ctx.tuiThemes`, so palettes follow the plugin and a normal mount writes nothing into your home directory. If the service arrives late, the plugin falls back to the static path and deletes the files it wrote this run once the runtime service confirms — but only if they are still unmodified.
-- **Older hosts**: files are copied into `~/.dsh-tui/themes/` only when missing; a `pink-*.json` you edited is never overwritten.
+- **Older hosts**: files are copied into `~/.dsh-tui/themes/` only when missing; a `pink-*.json` you edited is never overwritten. When the host contract predates the chrome keys (< 0.14.0), the written copy drops those eight keys — byte-identical to the v0.7.3 asset, so no “unknown colour key” warning appears on every boot.
 - **Corrupted files are the one exception**: a file that cannot be parsed as JSON (say, a leftover from an interrupted install) is renamed to `<name>.corrupt-<timestamp>` to preserve the scene, the bundled copy is reinstalled, and the plugin logs a warning plus a toast.
 - **Upgrading from an older host**: to switch to runtime-managed themes, back up and delete `~/.dsh-tui/themes/pink-{night,day,ansi}.json` yourself — the plugin never deletes user files. Leftovers byte-identical to the bundled copy get a one-shot notice and confirmation dialog.
 
 ## Hardcoded by the host (themes cannot cover)
 
-These elements are hardcoded by dsh-TUI, read no theme key, and are out of reach for both theme JSON and plugin seams (first measured on 0.9.3, re-checked item by item on 0.11.0 and re-verified on 0.11.2; one item — header text colours — carries a corrected description). All of them need upstream dsh-TUI changes (for example: wire the charge colours and context-bar segments to theme keys, use `isLightThemeActive()` for empty segments, add theme keys for the prompt cursor); until then, every community theme package lives under the same constraints.
+These elements are still hardcoded by dsh-TUI, read no theme key, and are out of reach for both theme JSON and plugin seams (first measured on 0.9.3, re-checked item by item on 0.11.0 and 0.11.2, and checked again on 0.14.0). **Four of them moved to theme keys in 0.14.0 and left this list**: the five footer context-bar segments (`contextBarSystem/Prompt/Assistant/Thinking/Tools`), the ignition wave and ❯ prefix (`ignition`/`ignitionDim`), the empty-segment light/dark judgement (now `isLightThemeActive()`) and the prompt cursor fill (`cursor`). The rest still need upstream dsh-TUI changes; until then, every community theme package lives under the same constraints.
 
 <details>
-<summary>Show the full list (10 items, with host source locations)</summary>
+<summary>Show the full list (7 items, with host source locations)</summary>
 
 | Element | Current state | Location (host source) |
 | --- | --- | --- |
-| Prompt ❯ glyph | No colour parameter in the default state (terminal default foreground, dimmed while the model works); the top reasoning-effort charge animation uses a hardcoded blue ramp (dark `#82B9FF` / light `#1E5FEB`) | `EffortChargeGlyph.tsx`, `trajectory/effortIgnition.ts` |
-| Footer context-bar segment colours | The system / prompt / assistant / thinking / tools segments use a hardcoded navy→brand-blue ramp (`#22305F`→`#5A7CFF`) and never follow the theme | `screens/StatusMetrics.ts` |
-| Progress-bar empty-segment colours | The host compares `themeName === 'light'` as a string — a custom light theme such as pink-day is not `'light'`, so it gets the darker empty segment | `screens/StatusLine.tsx` |
+| Prompt ❯ glyph (resting state) | No colour parameter while resting (terminal default foreground, dimmed while the model works); the top reasoning-effort ignition wave, the input-border sweep and the ❯ prefix take the theme's `ignition`/`ignitionDim` since 0.14.0 — all three bundled themes set them (pink-ansi uses hex: the waveform parser does not accept `ansi:*` and would fall back to the pre-theme blue pair) | `components/PromptInput.tsx`, `components/EffortChargeGlyph.tsx`, `components/EffortInputBorder.tsx`, `trajectory/effortIgnition.ts` |
 | Status-line text colour | On the legacy path the host renders scalar status lines colourless + terminal dim; since 0.10.1 the plugin uses the `tuiStatus.registerView` rich status view to colour by theme, and older hosts fall back to the scalar path | `screens/Chat.tsx`, `dsh-adapter/status.ts` |
-| Prompt block cursor | The host hides the native terminal cursor and draws the prompt cursor as an inverse character, so its colour is the inverse of the theme's text/background; OSC 12 only colours the invisible native cursor (which becomes visible only with `CLAUDE_CODE_ACCESSIBILITY=1`) | `ink/components/App.tsx`, `components/PromptInput.tsx` |
 | Body links | OSC 8 hyperlinks default to a hardcoded ANSI blue (`chalk.blue`); a comment notes wrap-ansi cannot preserve theme RGB across OSC 8, so link colour reads no theme key | `cc/hyperlink.ts` |
 | Header pixel whale | Its palette is hardcoded and pre-rendered at module load; no theme can recolour the whale — four colours on 0.9.3 (outline/body/belly/mouth), six since 0.10.x (a heart and a sleep-Z state colour on top) | `components/Whale.tsx` |
 | Header text colours | The ✦ wordmark and welcome line follow the theme (`claude`, `accent` since 0.10.1), and the wordmark's sweep **highlight follows the theme too** — `LogoV2` passes `theme.accentShimmer` (the 0.10.1 key name, `claudeShimmer` before it) to `sweep()` as the highlight colour, and all three bundled themes set it (visible only during the opening sweep and a `/deepseek` replay). The `DEEPSEEK`/`HARNESS` pixel words and the welcome line keep the constant `FLASH` as their sweep highlight, `HARNESS` still ends its gradient on the fixed constant `PALE`, and the remaining main/gradient-end colours follow `claude`/`claudeBlue_FOR_SYSTEM_SPINNER` (`accent`/`activity` since 0.10.1). Also: the host's `parseRGB` accepts only `rgb(r,g,b)`, so hex/ansi values silently fall back to the fixed brand blue (hence pink-ansi keeps a blue header) | `components/LogoV2.tsx`, `components/bigfont.ts`, `components/shimmer.ts`, `components/Spinner/spinnerUtils.ts` |
@@ -155,6 +152,7 @@ rm ~/.dsh-tui/theme-follow.json
 ## Compatibility
 
 - **Minimum dsh-TUI: 0.8.8** (status line and settings section; measured on 0.9.3). 0.10.0 and newer use runtime theme registration; 0.10.1 and newer colour the status line through the rich status view (older hosts fall back to the colourless scalar line); hosts without the `dsh-tui-extensions` surface degrade gracefully to “install the three themes only” without errors.
+- **The eight chrome theme keys need dsh-TUI ≥ 0.14.0** (the contract extension from upstream PR #1260: the five `contextBar*` segments, `ignition`/`ignitionDim` and `cursor`). The plugin picks the palette by host version: 0.14.0 and newer get the full key set; older hosts get it without those eight — the host's runtime admission rejects a whole descriptor over a single unknown key (all three themes would disappear at once), and the static-file parser warns per key. The downgrade only affects those chrome elements (they keep the host's own colours), never the themes themselves, and the plugin logs one line per activation.
 - **Both generations of `dsh-settings` are supported**: ≤ 0.1.6 (dsh-TUI 0.9.x/0.10.x) uses plugin-registered namespaces + `scope.watch`; ≥ 0.1.7 (dsh-TUI 0.11+) uses Config volatile-field projection + `loader/volatile-update` re-reads. The branch is chosen by capability probing, never by parsing versions, and failures on either path are logged rather than swallowed.
 - **dsh runtimes from `0.2.0-rc.1` validate peers at startup**: the host reads each bundle's `peerDependencies`, compares every `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` range against its own runtime version, and skips the whole bundle on a mismatch (stderr reports `skipping profile bundle`). This plugin's peer ranges cover `0.1.0-rc.6`–`0.1.x` and `0.2.0-rc.1`–`0.2.x` (since v0.7.3; the new generation is declared as `^0.2.0-rc.1`), so 0.2 hosts load it normally. The host always evaluates with `includePrerelease` semantics, which is why 0.2 prereleases pass there; npm's default prerelease semantics are narrower, so a future range like `0.2.1-rc.x` would report an unmet peer on the npm side (the framework packages ship with the dsh CLI and a profile never installs `@deepseek-ai/*`, so this has no practical effect).
 - Node `^22.19 || >=24`, pure ESM, MIT.

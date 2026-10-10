@@ -7,7 +7,7 @@
 ## 环境
 
 - Node `^22.19 || >=24`，纯 ESM；TypeScript 编译到 `lib/types/`，构建产物随仓库提交，CI 会校验它与全新构建一致。
-- 宿主基线：devDependency 钉住 `@deepseek-harness-tui/dsh-tui@0.11.2`，引擎包同代钉在 `0.2.0-rc.1`；devDependency 的 `dsh-settings` 是 ≥ 0.1.7 的 Config 投影世代，因此 `verify:settings` 在本仓默认就会真跑投影断言（旧代 ≤ 0.1.6 路径由 `verify.mjs` 场景 2 与 `DSH_SETTINGS_DIR` 手验覆盖）。
+- 宿主基线：devDependency 钉住 `@deepseek-harness-tui/dsh-tui@0.14.0`（第一个含 chrome 8 键契约的发版），引擎包同代钉在 `0.2.0-rc.1`；devDependency 的 `dsh-settings` 是 ≥ 0.1.7 的 Config 投影世代，因此 `verify:settings` 在本仓默认就会真跑投影断言（旧代 ≤ 0.1.6 路径由 `verify.mjs` 场景 2 与 `DSH_SETTINGS_DIR` 手验覆盖）。
 
 ## 安装前提
 
@@ -25,7 +25,7 @@ npm run verify           # 插件契约、主题校验、卡片字段与可编�
 npm run verify:package   # 发布清单（npm pack --dry-run）
 npm run verify:peers     # peer 覆盖契约（已验证的运行时版本必须被 peer 段覆盖）
 npm run verify:settings  # dsh-settings 代际投影断言（按能力探测，旧代报告跳过并以 0 退出）
-npm run verify:host      # 构建 + 零配置宿主验证（0.11.2）
+npm run verify:host      # 构建 + 零配置宿主验证（0.14.0）
 npm run release:check    # build + verify + verify:package + verify:peers + verify:settings
 ```
 
@@ -33,7 +33,7 @@ npm run release:check    # build + verify + verify:package + verify:peers + veri
 
 ## 指向其他宿主版本
 
-`verify:host` 默认使用 devDependency 中的 dsh-TUI（当前 0.11.2）做零配置验证，不需要本地宿主源码检出。验证旧版或发布基线时，显式指向同一版本的宿主 adapter 与源码；需要锁定版本时再设 `DSH_TUI_EXPECTED_VERSION`：
+`verify:host` 默认使用 devDependency 中的 dsh-TUI（当前 0.14.0）做零配置验证，不需要本地宿主源码检出。验证旧版或发布基线时，显式指向同一版本的宿主 adapter 与源码；需要锁定版本时再设 `DSH_TUI_EXPECTED_VERSION`：
 
 ```sh
 DSH_TUI_ADAPTER_DIR=/path/to/dsh-TUI/lib/types/dsh-adapter \
@@ -54,7 +54,9 @@ DSH_SETTINGS_DIR=/path/to/dsh-settings-0.1.5 npm run verify:host
 DSH_SETTINGS_DIR="$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh-settings" npm run verify:settings
 ```
 
-CI 只覆盖 0.11.2 零配置线；0.9.x 兼容回归仍需本机按上面的 env 指向对应宿主 worktree。宿主基线（devDependency 与 CI 的 `DSH_TUI_EXPECTED_VERSION`）由 `verify:peers` 的断言守住：两边不一致时它直接失败。
+CI 只覆盖 0.14.0 零配置线；0.9.x 兼容回归仍需本机按上面的 env 指向对应宿主 worktree。宿主基线（devDependency 与 CI 的 `DSH_TUI_EXPECTED_VERSION`）由 `verify:peers` 的断言守住：两边不一致时它直接失败。
+
+指向 0.14.0 之前的宿主时不必改插件：`src/hostContract.ts` 的宿主版本门会让运行时注册与静态副本都退回去掉 chrome 8 键的调色板（与 v0.7.3 资产逐字节相同），`runtime-themes-headless.mjs` 与 `validate-themes-against-host.mjs` 会按宿主的实际契约选择对应形态并各自打印一行（`host chrome keys: predate the contract (withheld)` / `validating the withheld (pre-0.14.0) form`）。
 
 ## CI 门禁
 

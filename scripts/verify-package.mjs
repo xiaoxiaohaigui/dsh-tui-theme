@@ -49,6 +49,8 @@ for (const required of [
   'lib/types/themeAssets.d.ts',
   'lib/types/runtimeThemes.js',
   'lib/types/runtimeThemes.d.ts',
+  'lib/types/hostContract.js',
+  'lib/types/hostContract.d.ts',
   'lib/types/toast.js',
   'lib/types/toast.d.ts',
   'lib/types/statusView.js',
