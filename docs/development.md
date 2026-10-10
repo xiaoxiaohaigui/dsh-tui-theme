@@ -56,7 +56,7 @@ DSH_SETTINGS_DIR="$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh-settings" np
 
 CI 只覆盖 0.14.0 零配置线；0.9.x 兼容回归仍需本机按上面的 env 指向对应宿主 worktree。宿主基线（devDependency 与 CI 的 `DSH_TUI_EXPECTED_VERSION`）由 `verify:peers` 的断言守住：两边不一致时它直接失败。
 
-指向 0.14.0 之前的宿主时不必改插件：`src/hostContract.ts` 的宿主版本门会让运行时注册与静态副本都退回去掉 chrome 8 键的调色板（与 v0.7.3 资产逐字节相同），`runtime-themes-headless.mjs` 与 `validate-themes-against-host.mjs` 会按宿主的实际契约选择对应形态并各自打印一行（`host chrome keys: predate the contract (withheld)` / `validating the withheld (pre-0.14.0) form`）。
+指向 0.14.0 之前的宿主时不必改插件：`src/hostContract.ts` 的宿主版本门会让运行时注册与静态副本都退回去掉 chrome 键的调色板（实际是 7 个——`cursor` 本就不声明，见 README 兼容性；退回去的字节与 v0.7.3 资产完全相同），`runtime-themes-headless.mjs` 与 `validate-themes-against-host.mjs` 会按宿主的实际契约选择对应形态并各自打印一行（`host chrome keys: predate the contract (withheld)` / `validating the withheld (pre-0.14.0) form`）。
 
 ## CI 门禁
 

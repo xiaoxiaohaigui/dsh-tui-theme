@@ -56,7 +56,7 @@ DSH_SETTINGS_DIR="$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh-settings" np
 
 CI only covers the 0.14.0 zero-config line; 0.9.x compatibility regressions still need a local run with the env vars above pointing at the matching host worktree. The host baseline itself (devDependency vs CI's `DSH_TUI_EXPECTED_VERSION`) is guarded by `verify:peers`: it fails when the two disagree.
 
-Pointing at a host older than 0.14.0 needs no plugin change: the host-version gate in `src/hostContract.ts` makes both the runtime registration and the static copies fall back to the palettes without the eight chrome keys (byte-identical to the v0.7.3 assets), and `runtime-themes-headless.mjs` / `validate-themes-against-host.mjs` pick the matching form from the host's actual contract, each printing one line (`host chrome keys: predate the contract (withheld)` / `validating the withheld (pre-0.14.0) form`).
+Pointing at a host older than 0.14.0 needs no plugin change: the host-version gate in `src/hostContract.ts` makes both the runtime registration and the static copies fall back to the palettes without the chrome keys (seven in practice — `cursor` is never declared, see the README's compatibility notes; the withheld bytes equal the v0.7.3 assets), and `runtime-themes-headless.mjs` / `validate-themes-against-host.mjs` pick the matching form from the host's actual contract, each printing one line (`host chrome keys: predate the contract (withheld)` / `validating the withheld (pre-0.14.0) form`).
 
 ## CI gates
 

@@ -102,11 +102,20 @@ for (const entry of snapshot) {
     assert.equal(host.resolve(entry.name).accent, expected.colors.claude)
     assert.equal(themeModule.getTheme(entry.name).accent, expected.colors.claude)
     for (const key of CHROME_THEME_KEYS) {
+      if (key === 'cursor') continue // never declared: the base palette answers with the inverse-video caret
       if (hostKnowsChromeKeys) {
         assert.equal(entry.colors[key], expected.colors[key], `${entry.name}.${key} must register verbatim`)
       } else {
         assert.equal(key in entry.colors, false, `${entry.name}.${key} must be withheld from this host`)
       }
+    }
+    // The caret key is omitted on purpose: an empty colour is invalid at this
+    // boundary (the host would reject the whole descriptor), so the base
+    // palette answers with `''` — the inverse-video caret upstream's built-in
+    // sakura family uses too.
+    assert.equal('cursor' in entry.colors, false, `${entry.name} must not declare a caret fill`)
+    if (hostKnowsChromeKeys) {
+      assert.equal(host.resolve(entry.name).cursor, '', `${entry.name} must resolve to the inverse-video caret`)
     }
   } else {
     const expectedColors = { ...expected.colors }

@@ -150,6 +150,14 @@ const settingsKeys = [
   'error',
 ]
 
+// Keys the palettes deliberately leave to the base theme's own default:
+// `userMessageBackground` is the host's transparent-message surface, and
+// `cursor` is the inverse-video caret every built-in uses — an empty string is
+// not a valid colour (the runtime seam rejects the whole descriptor over it,
+// the static parser warns and skips), so the key is omitted rather than filled
+// and the host serves the base palette's `''`.
+const baseDefaultedKeys = new Set(['userMessageBackground', 'cursor'])
+
 function parseColor(value) {
   if (/^#[0-9A-Fa-f]{6}$/.test(value)) {
     const n = Number.parseInt(value.slice(1), 16)
@@ -191,8 +199,8 @@ for (const file of readdirSync(themesDir).filter(name => name.endsWith('.json'))
 
   assert.notEqual(spec, undefined, `${file} must parse`)
   assert.deepEqual(warnings, [], `${file} must produce zero host warnings`)
-  const missing = allKeys.filter(key => key !== 'userMessageBackground' && !(key in spec.colors))
-  assert.deepEqual(missing, [], `${file} must cover every Theme key`)
+  const missing = allKeys.filter(key => !baseDefaultedKeys.has(key) && !(key in spec.colors))
+  assert.deepEqual(missing, [], `${file} must cover every Theme key it does not leave to the base palette`)
   const missingSettingsKeys = settingsKeys.filter(key => !(key in spec.colors))
   assert.deepEqual(
     missingSettingsKeys,
@@ -256,4 +264,7 @@ for (const [theme, key, background, minimum] of cases) {
   assert.ok(ratio >= minimum, `${theme}.${probeKey} contrast ${ratio.toFixed(2)} >= ${minimum}`)
 }
 
-console.log(`OK host theme validation: ${Object.keys(built).length} themes, ${allKeys.length - 1} keys each, settings colors covered`)
+console.log(
+  `OK host theme validation: ${Object.keys(built).length} themes, ${allKeys.length} contract keys ` +
+    `(${[...baseDefaultedKeys].join(', ')} left to the base palette), settings colors covered`,
+)

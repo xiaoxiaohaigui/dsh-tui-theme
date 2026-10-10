@@ -12,9 +12,13 @@
  *
  * Upstream PR #1260 added the eight chrome keys below to the contract; the
  * first published release carrying them is dsh-TUI 0.14.0 (npm, 2026-10-07).
- * On anything older — including every static-asset host — this plugin withholds
- * them and ships the 73-semantic-key palettes it published as v0.7.3, so a
- * theme never vanishes over a cosmetic key.
+ * The palettes declare seven of them — `cursor` is deliberately left out, since
+ * its intended value (the empty string that keeps the inverse-video caret) is
+ * not a valid colour at this boundary and the host's base palette already
+ * answers with it. On anything older — including every static-asset host — this
+ * plugin withholds the keys it does declare and ships the 73-semantic-key
+ * palettes it published as v0.7.3, so a theme never vanishes over a cosmetic
+ * key.
  *
  * Detection reads the host package's own manifest
  * (`@deepseek-harness-tui/dsh-tui/package.json`, a published subpath). When it
@@ -35,6 +39,10 @@ const HOST_PACKAGE = '@deepseek-harness-tui/dsh-tui'
  * context bar's five segment fills, the thinking-effort ignition pair (crest
  * colour and the band it fades into) and the prompt caret fill. They are the
  * only keys this plugin ships that a host release can predate.
+ *
+ * `cursor` appears here even though no palette declares it: it belongs to the
+ * same contract addition, so a future palette that does set it must not send it
+ * to a host that predates the key — one unknown key rejects the descriptor.
  */
 export const CHROME_THEME_KEYS = [
   'contextBarSystem',

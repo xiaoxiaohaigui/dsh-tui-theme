@@ -104,7 +104,6 @@
     "contextBarThinking": "ansi:white",
     "contextBarTools": "ansi:whiteBright",
     "ignition": "#F27BA6",
-    "ignitionDim": "#241A20",
-    "cursor": "ansi:magentaBright"
+    "ignitionDim": "#241A20"
   }
 }

@@ -423,7 +423,9 @@ const emit = (record, event, ...args) => {
   assert.equal(hostSupportsChromeKeys(), true, 'the pinned baseline accepts the chrome keys')
 
   // A pre-0.14.0 host rejects a whole descriptor over one unknown key, so the
-  // gate withholds all eight and keeps every other palette entry.
+  // gate withholds every chrome key and keeps every other palette entry. The
+  // caret key is never declared at all (see below), so the withheld set is the
+  // seven keys the palettes do carry — the exact v0.7.3 key set again.
   setChromeKeySupportForTests(false)
   try {
     const registrations = []
@@ -435,6 +437,7 @@ const emit = (record, event, ...args) => {
     for (const [descriptor] of registrations) {
       const source = bundled.find(theme => theme.name === descriptor.name)
       assert.notEqual(source, undefined, 'every registration matches a bundled theme')
+      assert.equal('cursor' in source.colors, false, 'the caret key is left to the host base palette')
       assert.equal(
         CHROME_THEME_KEYS.some(key => key in descriptor.colors),
         false,
@@ -451,7 +454,25 @@ const emit = (record, event, ...args) => {
   } finally {
     setChromeKeySupportForTests(undefined)
   }
-  console.log('✓ chrome-key gate: full palette on 0.14.0, withheld 95-key palette on older hosts')
+
+  // Gate on (the pinned baseline): the seven declared chrome keys arrive, and
+  // `cursor` stays undeclared — the host serves the base palette's `''`, i.e.
+  // the inverse-video caret every upstream built-in uses. Declaring a solid
+  // fill instead would look different from the built-in sakura family.
+  {
+    const registrations = []
+    const themes = { register(descriptor, identity) { registrations.push([descriptor, identity]); return () => {} } }
+    await applyAndSettle(makeStubCtx({ themes }).ctx)
+    const declared = CHROME_THEME_KEYS.filter(key => key !== 'cursor')
+    for (const [descriptor] of registrations) {
+      for (const key of declared) {
+        assert.equal(key in descriptor.colors, true, `${descriptor.name}.${key} must reach a chrome-capable host`)
+      }
+      assert.equal('cursor' in descriptor.colors, false, `${descriptor.name} must not declare the caret fill`)
+      assert.equal(Object.keys(descriptor.colors).length, 102, 'the full palette carries 102 keys')
+    }
+  }
+  console.log('✓ chrome-key gate: full 102-key palette on 0.14.0, withheld 95-key palette on older hosts')
 }
 
 // ── 2d. live-config marking: the card and the marked Config keys are one set ─
@@ -682,8 +703,11 @@ const emit = (record, event, ...args) => {
       assert.equal(CHROME_THEME_KEYS.some(key => key in colors), false, `${file} must withhold every chrome key`)
       assert.equal(Object.keys(colors).length, 95, `${file} must install the v0.7.3 key set`)
       // Byte fidelity matters twice over: the host's per-key parser is spared
-      // eight warnings per boot, and the file is the exact asset v0.7.3 shipped.
+      // one warning per undeclared chrome key, and the withheld text is the
+      // exact asset v0.7.3 shipped (its 95-key layout, since neither that
+      // release nor the current one declares `cursor`).
       assert.equal(written, `${JSON.stringify(JSON.parse(written), null, 2)}\n`, `${file} keeps the bundled formatting`)
+      assert.equal('cursor' in JSON.parse(full).colors, false, `${file} leaves the caret key to the host`)
     }
     // A file from the full-fidelity era is still this plugin's copy, so a host
     // upgrade cannot leave a stale palette shadowing the registry unnoticed.
