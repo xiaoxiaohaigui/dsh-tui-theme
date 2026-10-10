@@ -65,7 +65,7 @@ dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-<版本号>.tgz
 
 ![pink-theme 设置区块](docs/screenshots/settings.png)
 
-> 图中链接与顶栏像素鲸鱼仍是宿主硬编码；底栏进度条、点火动画与输入光标自 0.14.0 起跟随主题，见[宿主硬编码的部分](#宿主硬编码主题覆盖不到的部分)。
+> 图中顶栏像素鲸鱼仍是宿主硬编码；底栏进度条、点火动画、正文链接与输入光标自 0.14.0 起跟随主题，见[宿主硬编码的部分](#宿主硬编码主题覆盖不到的部分)。
 
 ## 配置
 
@@ -120,16 +120,15 @@ dsh-TUI 没有向插件公开安全的终端查询接缝。为了不与宿主的
 
 ## 宿主硬编码、主题覆盖不到的部分
 
-以下元素的颜色/形态仍由 dsh-TUI 宿主写死，不读任何主题键，主题 JSON 与插件接缝都无法覆盖（0.9.3 首测，0.11.0 逐条复核、0.11.2 复查，0.14.0 再次逐条核对）。**其中四项自 0.14.0 起已接入主题键，因此移出本表**：底栏五段进度条（`contextBarSystem/Prompt/Assistant/Thinking/Tools`）、点火波与 ❯ 前缀（`ignition`/`ignitionDim`）、进度条空余段的明暗判定（改用 `isLightThemeActive()`）、输入光标填充（`cursor`）。其余项仍需上游 dsh-TUI 修改；上游修复前，任何社区主题包都受同样约束。
+以下元素的颜色/形态仍由 dsh-TUI 宿主写死，不读任何主题键，主题 JSON 与插件接缝都无法覆盖（0.9.3 首测，0.11.0 逐条复核、0.11.2 复查，0.14.0 再次逐条核对）。**其中五项自 0.14.0 起已接入主题键，因此移出本表**：底栏五段进度条（`contextBarSystem/Prompt/Assistant/Thinking/Tools`）、点火波与 ❯ 前缀（`ignition`/`ignitionDim`）、进度条空余段的明暗判定（改用 `isLightThemeActive()`）、输入光标填充（`cursor`）、正文链接（改取当前主题的 `accent`，解析不出才回落 ANSI 蓝）。其余项仍需上游 dsh-TUI 修改；上游修复前，任何社区主题包都受同样约束。
 
 <details>
-<summary>展开完整清单（7 项，含宿主源码位置）</summary>
+<summary>展开完整清单（6 项，含宿主源码位置）</summary>
 
 | 元素 | 现状 | 位置（宿主源码） |
 | --- | --- | --- |
 | 输入框 ❯ 提示符（静止态） | 静止态无颜色参数（终端默认前景色，模型工作时变暗）；最高推理档的点火波、输入框扫光与 ❯ 前缀自 0.14.0 起取主题 `ignition`/`ignitionDim`——本插件三套均已设值（pink-ansi 给 hex：波形解析器不认 `ansi:*`，会给回改前的蓝白对） | `components/PromptInput.tsx`、`components/EffortChargeGlyph.tsx`、`components/EffortInputBorder.tsx`、`trajectory/effortIgnition.ts` |
 | 状态行文字颜色 | 旧路径标量状态行由宿主统一以无色 + 终端 dim 渲染；≥ 0.10.1 插件已改用 `tuiStatus.registerView` 富状态视图按主题配色，旧宿主自动回退标量路径 | `screens/Chat.tsx`、`dsh-adapter/status.ts` |
-| 正文链接 | OSC 8 超链接默认写死的 ANSI 蓝（`chalk.blue`）；注释说明 wrap-ansi 无法跨 OSC 8 保留主题 RGB 色，故链接色不读主题键 | `cc/hyperlink.ts` |
 | 顶栏像素鲸鱼颜色 | 调色板写死且模块加载时预渲染，任何主题都无法改变鲸鱼配色——0.9.3 为四色（描边/身体/腹部/嘴），0.10.x 起为六色（另有心形与睡眠 Z 两个状态色） | `components/Whale.tsx` |
 | 顶栏文字色 | ✦ 字标与欢迎语跟主题（`claude`，0.10.1 起 `accent`）；字标扫过时的**高光也跟主题**——`LogoV2` 把 `theme.accentShimmer`（0.10.1 起的键名，旧名 `claudeShimmer`）当高光色传给 `sweep()`，本插件三主题均已设值（可见时机仅开场与 `/deepseek` 重播的扫过瞬间）；`DEEPSEEK`/`HARNESS` 两个像素词与欢迎语的扫过高光仍写死为常量 `FLASH`，`HARNESS` 的渐变结尾段是固定常量 `PALE`，其余主色/渐变结尾色跟 `claude`/`claudeBlue_FOR_SYSTEM_SPINNER`（0.10.1 起 `accent`/`activity`）。另：宿主 `parseRGB` 只认 `rgb(r,g,b)`，hex/ansi 值静默回退固定品牌蓝（pink-ansi 因此顶栏仍为蓝色） | `components/LogoV2.tsx`、`components/bigfont.ts`、`components/shimmer.ts`、`components/Spinner/spinnerUtils.ts` |
 | 思考消息折叠头脉冲字 | 思考仍在流式输出时，折叠头行首的 spinner 字形在常量 `BRAND`→`ICE` 之间做正弦脉冲（minimal 模式直接去色）；同一行的标题文字才跟主题（hover 取 `text`，否则 dim） | `components/messages/AssistantThinkingMessage.tsx`、`components/shimmer.ts` |
