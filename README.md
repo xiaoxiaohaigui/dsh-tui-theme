@@ -6,11 +6,11 @@
 
 > **0.8 起本插件不再提供主题。** 樱花粉三套（`pink-night` / `pink-day` / `pink-ansi`）已移交上游：上游 PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) 已于 2026-10-12 合并进 dsh-TUI 主线（merge `4f4980fe`），并**自 dsh-TUI 0.15.0 起作为宿主内置预设发布**，调色板与主题键由上游维护；本包只保留非主题的装饰部分，也就不会再与内置主题抢名字、抢文件或抢调色板。宿主 < 0.15.0 时粉主题名只能来自 0.7.x 留下的旧主题文件（见「迁移要点」），那些宿主上全新安装拿不到粉主题名，需要主题本身时请继续用 `dsh-tui-theme@0.7.5`。
 
-## 先选一条路
+## 安装、更新与卸载
 
-**樱花粉主题已随 dsh-TUI 0.15.0 成为宿主预置主题**（上游 PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) 已合并并发版，`/theme` 里直接可选 `pink-night` / `pink-day` / `pink-ansi`）。本插件从 0.8 起只提供花符状态行，按你的需要二选一：
+樱花粉三套（`pink-night` / `pink-day` / `pink-ansi`）自 **dsh-TUI 0.15.0** 起由宿主内置（上游 PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) 已合并并发版，`/theme` 里直接可选），调色板与主题键由上游维护。本插件从 0.8 起不再携带主题，只保留花符状态行，按需要选一条：
 
-**① 只要主题、不需要状态行** —— 卸载本插件，并把 0.7.x 当年写下的主题文件一起清掉（它们已被内置同名主题遮蔽，留着只是死重量）：
+**只要主题** —— 本插件不必安装；已装过 0.7.x 的请卸载，并清理当年写下的主题文件（已被内置同名主题遮蔽，留着只是死重量）：
 
 ```sh
 dsh plugin --profile dsh-tui remove -w dsh-tui-theme
@@ -33,13 +33,13 @@ Remove-Item "$env:USERPROFILE\.dsh-tui\theme-plugin-notice.json" -ErrorAction Si
 
 > ⚠️ 别删 `~/.dsh-tui/theme.json`——那是宿主记录你当前主题选择的文件。清理命令的逐条说明见下面的「[旧主题文件清理](#旧主题文件清理卸载前后都适用)」。
 
-**② 需要花符状态行** —— 更新到本版（不带主题文件，只保留状态行）：
+**需要状态行** —— 安装或更新到本版（不带主题文件）：
 
 ```sh
 dsh plugin --profile dsh-tui add -w dsh-tui-theme@0.8.0
 ```
 
-之后可能会更新更多主题，感谢使用 🌸
+之后可能还会带来更多主题，感谢使用 🌸
 
 ## 0.8 变更（升级前请读）
 
