@@ -7,8 +7,8 @@
 ## 环境
 
 - Node `^22.19 || >=24`，纯 ESM；TypeScript 编译到 `lib/types/`，构建产物随仓库提交，CI 会校验它与全新构建一致。
-- 宿主基线：devDependency 钉住 `@deepseek-harness-tui/dsh-tui@0.11.2`，引擎包同代钉在 `0.2.0-rc.1`；devDependency 的 `dsh-settings` 是 ≥ 0.1.7 的 Config 投影世代，因此 `verify:settings` 在本仓默认就会真跑投影断言（旧代 ≤ 0.1.6 路径由 `verify.mjs` 场景 2 与 `DSH_SETTINGS_DIR` 手验覆盖）。
-- ⚠️ 0.11.2 宿主**没有内置樱族**，但仍把 `~/.dsh-tui/themes/pink-*.json` 当静态主题解析。插件的 `pink-only` 判据只是主题名（`DSH_TUI_THEME` / `theme.json`），与宿主是否内置无关，所以 `verify.mjs` 往沙箱 `theme.json` 写 `pink-night` 就能让状态行可见；真机上没有内置樱族时，粉主题名只能来自 0.7.x 遗留的主题文件。真机验证内置樱族要用带该分支的宿主构建。
+- 宿主基线：devDependency 钉住 `@deepseek-harness-tui/dsh-tui@0.14.0`，引擎包同代钉在 `0.2.0-rc.1`；devDependency 的 `dsh-settings` 是 ≥ 0.1.7 的 Config 投影世代，因此 `verify:settings` 在本仓默认就会真跑投影断言（旧代 ≤ 0.1.6 路径由 `verify.mjs` 场景 2 与 `DSH_SETTINGS_DIR` 手验覆盖）。
+- ⚠️ 0.14.0 宿主**没有内置樱族**（樱族的上游 PR #1294 已于 2026-10-12 合并进 main，尚未随宿主发版），但仍把 `~/.dsh-tui/themes/pink-*.json` 当静态主题解析。插件的 `pink-only` 判据只是主题名（`DSH_TUI_THEME` / `theme.json`），与宿主是否内置无关，所以 `verify.mjs` 往沙箱 `theme.json` 写 `pink-night` 就能让状态行可见；真机上没有内置樱族时，粉主题名只能来自 0.7.x 遗留的主题文件。真机验证内置樱族要用带它的宿主构建（上游 main 的构建，或本地 pink 集成构建 `D:\dsh-tui-workspace\dsh-TUI-pink-0140`）。宿主带该樱族的正式版发布后，把 devDependency 与 CI 的 `DSH_TUI_EXPECTED_VERSION` 一起抬到该版本，第 4 条门禁自动从跳过变为真跑。
 
 ## 安装前提
 
@@ -26,7 +26,7 @@ npm run verify           # 17 个场景：状态行两代路径、设置卡两�
 npm run verify:package   # 发布清单（npm pack --dry-run）
 npm run verify:peers     # peer 覆盖契约（已验证的运行时版本必须被 peer 段覆盖）
 npm run verify:settings  # dsh-settings 代际投影断言（按能力探测，旧代报告跳过并以 0 退出）
-npm run verify:host      # 构建 + 真宿主装配（devDependency 的 0.11.2）+ 调色板门禁（宿主带内置樱族时才实际比对）
+npm run verify:host      # 构建 + 真宿主装配（devDependency 的 0.14.0）+ 调色板门禁（宿主带内置樱族时才实际比对）
 npm run release:check    # build + verify + verify:package + verify:peers + verify:settings
 ```
 
@@ -34,7 +34,7 @@ npm run release:check    # build + verify + verify:package + verify:peers + veri
 
 ## 指向其他宿主版本
 
-`verify:host` 默认使用 devDependency 中的 dsh-TUI（当前 0.11.2）做零配置验证，不需要本地宿主源码检出。验证其它宿主时显式指向同一版本的 adapter；需要锁定版本时再设 `DSH_TUI_EXPECTED_VERSION`：
+`verify:host` 默认使用 devDependency 中的 dsh-TUI（当前 0.14.0）做零配置验证，不需要本地宿主源码检出。验证其它宿主时显式指向同一版本的 adapter；需要锁定版本时再设 `DSH_TUI_EXPECTED_VERSION`：
 
 ```sh
 DSH_TUI_ADAPTER_DIR=/path/to/dsh-TUI/lib/types/dsh-adapter \
@@ -50,7 +50,7 @@ npm run verify:host
 DSH_SETTINGS_DIR="$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh-settings" npm run verify:settings
 ```
 
-CI 只覆盖 0.11.2 零配置线；0.9.x 兼容回归仍需本机按上面的 env 指向对应宿主 worktree。宿主基线（devDependency 与 CI 的 `DSH_TUI_EXPECTED_VERSION`）由 `verify:peers` 的断言守住：两边不一致时它直接失败。
+CI 只覆盖 0.14.0 零配置线；0.9.x 兼容回归仍需本机按上面的 env 指向对应宿主 worktree。宿主基线（devDependency 与 CI 的 `DSH_TUI_EXPECTED_VERSION`）由 `verify:peers` 的断言守住：两边不一致时它直接失败。
 
 ## CI 门禁
 
@@ -70,7 +70,7 @@ CI 只覆盖 0.11.2 零配置线；0.9.x 兼容回归仍需本机按上面的 en
 1. 上游改了家族色值（或新增粉主题名）时，同步改 `src/palette.ts` 的表；
 2. 若新增了主题名，同时更新 `src/themePref.ts` 的 `PINK_THEMES`；
 3. `scripts/verify.mjs` 场景 8/15 钉住三套取值与非粉不上色，改完跑 `npm run verify`；
-4. 与宿主的自动比对：`verify:host` 在宿主构建带内置樱族时按路径 import 宿主的 `lib/types/theme.js`，把 9 个格（`accent` / `inactiveShimmer` / `subtle` × 三套）与 `src/palette.ts` 逐值比对（`#rrggbb` 与 `rgb()` 归一后比较），并断言宿主的粉主题名集与 `PINK_THEMES` 一致；宿主没有内置樱族（含 0.11.2 基线）时打印一行跳过说明。整个 73 键的复核仍用工作区级探针：`node probes/compare-preset-palettes.mjs`（见 `D:\dsh-tui-theme\probes\README.md`）。
+4. 与宿主的自动比对：`verify:host` 在宿主构建带内置樱族时按路径 import 宿主的 `lib/types/theme.js`，把 9 个格（`accent` / `inactiveShimmer` / `subtle` × 三套）与 `src/palette.ts` 逐值比对（`#rrggbb` 与 `rgb()` 归一后比较），并断言宿主的粉主题名集与 `PINK_THEMES` 一致；宿主没有内置樱族（含 0.14.0 基线）时打印一行跳过说明。整个 73 键的复核仍用工作区级探针：`node probes/compare-preset-palettes.mjs`（见 `D:\dsh-tui-theme\probes\README.md`）。
 
 ## 迁移提示与标记文件（`src/legacyNotice.ts`）
 
@@ -86,6 +86,7 @@ CI 只覆盖 0.11.2 零配置线；0.9.x 兼容回归仍需本机按上面的 en
 
 ## 预发布版本的发布口径
 
-- 版本形如 `0.8.0-pre.1`；npm 的 `latest` 仍指向带主题的 `0.7.3`，预发布必须显式指定版本或另打 dist-tag（例如 `npm publish --tag next`，用户装 `dsh-tui-theme@next`）。
+- 版本形如 `0.8.0-pre.2`；npm 的 `latest` 仍是带主题的 `0.7.5`，预发布必须显式指定版本或另打 dist-tag（例如 `npm publish --tag next`，用户装 `dsh-tui-theme@next`）。
+- **发布顺序**：等宿主带樱族的正式版发布后，再把 0.8 推上 `latest`。宿主发版前 `latest` 保持 0.7.5——此时全新安装在 ≤0.14.0 的宿主上既没有内置樱族、也没有插件主题，粉主题名会取不到。樱族上游 PR #1294 已合并（2026-10-12），差的就是宿主发版。
 - 发布链与正式版相同：`release:check` + `verify:host` 全绿 → bump → commit → tag → push → publish；区别只在 dist-tag 与 README 的安装命令。
 - 0.7.x 线（带主题）继续留在 `latest`，直到宿主内置樱族随正式版发布、且本条目的 0.8 稳定版跟进为止。

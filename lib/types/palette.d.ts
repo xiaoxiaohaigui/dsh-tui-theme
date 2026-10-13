@@ -7,8 +7,9 @@
  * status view has no way to read the colors the host is rendering with.
  *
  * The values below are the pink family's own `accent` / `inactiveShimmer` /
- * `subtle` entries, key-by-key identical to the host's built-ins (checked when
- * the family moved upstream, PR ccch1mneyyy/dsh-TUI#1294). They are the whole
+ * `subtle` entries, key-by-key identical to the host's built-ins (the family
+ * moved upstream with PR ccch1mneyyy/dsh-TUI#1294, merged on 2026-10-12 as
+ * `4f4980fe`; the merge left these three values untouched). They are the whole
  * palette surface this plugin still owns — three colors, no theme
  * registration, no files — so the garnish matches the palette it belongs to
  * without competing with it.

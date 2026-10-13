@@ -7,8 +7,8 @@ Everything the README leaves out: environment, install prerequisites, verificati
 ## Environment
 
 - Node `^22.19 || >=24`, pure ESM; TypeScript compiles to `lib/types/`, the build output is committed, and CI checks it against a fresh build.
-- Host baseline: the devDependency pins `@deepseek-harness-tui/dsh-tui@0.11.2`, engine packages pin `0.2.0-rc.1`; the devDependency `dsh-settings` belongs to the ≥ 0.1.7 Config-projection generation, so `verify:settings` runs real projection assertions by default (the ≤ 0.1.6 path is covered by scenario 2 of `verify.mjs` and by a manual `DSH_SETTINGS_DIR` run).
-- ⚠️ The 0.11.2 host has **no built-in pink family**, but it still parses `~/.dsh-tui/themes/pink-*.json` as static themes. The plugin's `pink-only` test is a theme *name* (`DSH_TUI_THEME` / `theme.json`), never a host capability check — which is why `verify.mjs` only has to write `pink-night` into its own sandbox `theme.json` to make the line visible. On a real host without the family, that name can only come from the theme files a 0.7.x install left behind. Real-machine checks of the built-in family need a host build that carries it.
+- Host baseline: the devDependency pins `@deepseek-harness-tui/dsh-tui@0.14.0`, engine packages pin `0.2.0-rc.1`; the devDependency `dsh-settings` belongs to the ≥ 0.1.7 Config-projection generation, so `verify:settings` runs real projection assertions by default (the ≤ 0.1.6 path is covered by scenario 2 of `verify.mjs` and by a manual `DSH_SETTINGS_DIR` run).
+- ⚠️ The 0.14.0 host has **no built-in pink family** (upstream PR #1294 merged into main on 2026-10-12 but is not released with a host yet), yet it still parses `~/.dsh-tui/themes/pink-*.json` as static themes. The plugin's `pink-only` test is a theme *name* (`DSH_TUI_THEME` / `theme.json`), never a host capability check — which is why `verify.mjs` only has to write `pink-night` into its own sandbox `theme.json` to make the line visible. On a real host without the family, that name can only come from the theme files a 0.7.x install left behind. Real-machine checks of the built-in family need a host build that carries it (upstream main, or the local pink integration build `D:\dsh-tui-workspace\dsh-TUI-pink-0140`). Once a host release ships the family, raise the devDependency and CI's `DSH_TUI_EXPECTED_VERSION` together and gate 4 below turns from a skip note into a real check.
 
 ## Install prerequisites
 
@@ -26,7 +26,7 @@ npm run verify           # 17 scenarios: both status paths, both settings genera
 npm run verify:package   # release manifest (npm pack --dry-run)
 npm run verify:peers     # peer coverage contract (every validated runtime must be accepted by a peer range)
 npm run verify:settings  # dsh-settings generation projection (capability-probed; legacy installs report and exit 0)
-npm run verify:host      # build + real-host assembly (the 0.11.2 devDependency) + palette gate (compared only on hosts that carry the pink family)
+npm run verify:host      # build + real-host assembly (the 0.14.0 devDependency) + palette gate (compared only on hosts that carry the pink family)
 npm run release:check    # build + verify + verify:package + verify:peers + verify:settings
 ```
 
@@ -34,7 +34,7 @@ After changing `devDependencies` / `overrides`, **delete `node_modules` and inst
 
 ## Pointing at another host version
 
-`verify:host` uses the devDependency dsh-TUI (currently 0.11.2) with zero configuration and needs no local host checkout. To verify another host, point `DSH_TUI_ADAPTER_DIR` at that version's adapter, and set `DSH_TUI_EXPECTED_VERSION` when the version must be pinned:
+`verify:host` uses the devDependency dsh-TUI (currently 0.14.0) with zero configuration and needs no local host checkout. To verify another host, point `DSH_TUI_ADAPTER_DIR` at that version's adapter, and set `DSH_TUI_EXPECTED_VERSION` when the version must be pinned:
 
 ```sh
 DSH_TUI_ADAPTER_DIR=/path/to/dsh-TUI/lib/types/dsh-adapter \
@@ -50,7 +50,7 @@ npm run verify:host
 DSH_SETTINGS_DIR="$HOME/.dsh/profiles/node_modules/@deepseek-ai/dsh-settings" npm run verify:settings
 ```
 
-CI only covers the 0.11.2 zero-configuration line; 0.9.x compatibility runs still need the env overrides above on a local checkout. The host baseline (devDependency and CI's `DSH_TUI_EXPECTED_VERSION`) is guarded by `verify:peers`, which fails when the two disagree.
+CI only covers the 0.14.0 zero-configuration line; 0.9.x compatibility runs still need the env overrides above on a local checkout. The host baseline (devDependency and CI's `DSH_TUI_EXPECTED_VERSION`) is guarded by `verify:peers`, which fails when the two disagree.
 
 ## CI gates
 
@@ -70,7 +70,7 @@ Maintaining it:
 1. When upstream changes a family colour (or adds a pink theme name), update the table in `src/palette.ts`;
 2. If a new theme name appears, update `PINK_THEMES` in `src/themePref.ts` too;
 3. Scenarios 8 and 15 of `scripts/verify.mjs` pin the three palettes and the "non-pink stays uncoloured" rule — run `npm run verify` after the change;
-4. Automatic comparison with the host: when the host build carries the built-in family, `verify:host` imports the host's `lib/types/theme.js` by path and compares its nine cells (`accent` / `inactiveShimmer` / `subtle` × three themes) against `src/palette.ts` by value (`#rrggbb` and `rgb()` normalized first), asserting as well that the host's pink names and `PINK_THEMES` agree; a host without the family (the 0.11.2 baseline included) prints a one-line skip note. For the full 73-key check, run the workspace-level probe `node probes/compare-preset-palettes.mjs` (see `D:\dsh-tui-theme\probes\README.md`).
+4. Automatic comparison with the host: when the host build carries the built-in family, `verify:host` imports the host's `lib/types/theme.js` by path and compares its nine cells (`accent` / `inactiveShimmer` / `subtle` × three themes) against `src/palette.ts` by value (`#rrggbb` and `rgb()` normalized first), asserting as well that the host's pink names and `PINK_THEMES` agree; a host without the family (the 0.14.0 baseline included) prints a one-line skip note. For the full 73-key check, run the workspace-level probe `node probes/compare-preset-palettes.mjs` (see `D:\dsh-tui-theme\probes\README.md`).
 
 ## Migration notice and its marker (`src/legacyNotice.ts`)
 
@@ -86,6 +86,7 @@ Maintaining it:
 
 ## Prerelease publishing
 
-- The version looks like `0.8.0-pre.1`; npm's `latest` still points at the theme-carrying `0.7.3`, so a prerelease needs an explicit version or its own dist-tag (for example `npm publish --tag next`, installed as `dsh-tui-theme@next`).
+- The version looks like `0.8.0-pre.2`; npm's `latest` is still the theme-carrying `0.7.5`, so a prerelease needs an explicit version or its own dist-tag (for example `npm publish --tag next`, installed as `dsh-tui-theme@next`).
+- **Publishing order**: only move 0.8 onto `latest` once a host release carries the built-in family. Before that `latest` stays 0.7.5 — a fresh install would otherwise get neither a host built-in nor a plugin theme, and no pink theme name at all. Upstream PR #1294 is merged (2026-10-12); only the host release is outstanding.
 - The release chain is the usual one: `release:check` + `verify:host` green → bump → commit → tag → push → publish; only the dist-tag and the README install command differ.
 - The 0.7.x line (with themes) stays on `latest` until the built-in pink family ships in a stable host release and this entry's 0.8 stable follows.

@@ -38,9 +38,11 @@ jobs:
           fi
       - run: node scripts/verify-package.mjs
 
-  # 完整验证档：零配置使用 devDependency 里钉住的 dsh-TUI（0.14.0，第一个
-  # 含 chrome 8 键契约的发版）与同代引擎包（0.2.0-rc.1），不需要本地宿主源码
-  # 检出。0.9.x 兼容回归仍留在发版前的本机门禁（REVIEW.md G4/R-011）。
+  # 完整验证档：零配置使用 devDependency 里钉住的 dsh-TUI（0.14.0）与同代
+  # 引擎包（0.2.0-rc.1），不需要本地宿主源码检出。0.9.x 兼容回归仍留在发版前的
+  # 本机门禁（REVIEW.md G4/R-011）。调色板门禁在带内置樱族的宿主上才真跑：
+  # 樱族随宿主正式发版后，把这里的 DSH_TUI_EXPECTED_VERSION 与 devDependency
+  # 一起抬到该版本即可，无需改脚本。
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 25
