@@ -5,8 +5,9 @@
  * The plugin's own logger output is invisible to a TUI user, so the one event
  * still worth surfacing — the migration notice for theme files a ≤0.7.x
  * install left behind (legacyNotice.ts) — goes through the host's toast
- * surface instead. Sending is fire-and-forget: hosts without the seam
- * (dsh-TUI < 0.10) never fire the inject and every send is a silent no-op,
+ * surface instead. A send never blocks on a retry chain, but it does report
+ * the outcome: hosts without the seam (dsh-TUI < 0.10) never fire the inject,
+ * so every attempt is a silent no-op and `onDelivered` stays uncalled —
  * exactly like the other soft-probed seams.
  *
  * The host registers its toast sink late (the dsh-tui row applies after the
@@ -16,13 +17,34 @@
  * before the seam even exists waits on the same schedule. Retries are
  * bounded, unref'd, and cleared with the activation; a toast lost to a host
  * rate limit is not worth fighting — the next real event re-reports.
+ *
+ * The caller hears about the outcome, not just the attempt: a send answers
+ * whether its first attempt landed, and `onDelivered` fires at the moment a
+ * delivery succeeds — which may be a retry, seconds later.
  * @module dsh-tui-theme/toast
  */
 import type { Context } from '@deepseek-ai/cordis';
 /** Host toast color vocabulary (neutral when omitted). */
 export type ToastColor = 'success' | 'warning' | 'error';
-/** Send one transient notification; resolves to whether it was delivered. */
-export type ToastSend = (text: string, color?: ToastColor) => boolean;
+/** Per-send options: the color to use and the delivery report to call back. */
+export interface ToastSendOptions {
+    /** Host toast color vocabulary; neutral when omitted. */
+    color?: ToastColor;
+    /**
+     * Called exactly once, at the moment the text reaches the host's sink — on
+     * the first attempt or on a later retry. Never called when every attempt was
+     * refused (no seam ever arrived, or the host rejected each send). It must
+     * not throw: it runs inside the delivery path.
+     */
+    onDelivered?: () => void;
+}
+/**
+ * Send one transient notification; resolves to whether the *first* attempt
+ * landed. A send that only lands later reports through `onDelivered`, so a
+ * caller that records something (legacyNotice's marker) can wait for the
+ * delivery instead of the attempt.
+ */
+export type ToastSend = (text: string, options?: ToastSendOptions) => boolean;
 /**
  * @internal Shrink the retry schedule for hermetic tests (verify.mjs only;
  * not part of the plugin's behavioral contract).

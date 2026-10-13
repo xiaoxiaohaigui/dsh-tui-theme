@@ -4,24 +4,25 @@
 
 A blossom status line for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI): one `✿ · clock · turns` line above the prompt, an editable `/settings` block, and a one-shot migration notice — all through official seams, with no shortcuts and no commands.
 
-> **Since 0.8 this package ships no themes.** The sakura-pink family (`pink-night` / `pink-day` / `pink-ansi`) is a **built-in dsh-TUI preset** now, with its palettes and theme keys maintained upstream; this package keeps only the non-theme garnish, so it can no longer compete with the built-ins over names, files, or palettes. Users on older hosts (no built-in pink family) who still want the 0.7.x themes should stay on `dsh-tui-theme@0.7.3`.
+> **Since 0.8 this package ships no themes.** The sakura-pink family (`pink-night` / `pink-day` / `pink-ansi`) has moved upstream and will ship as a **built-in dsh-TUI preset** (upstream PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) is not merged yet), with its palettes and theme keys maintained there; this package keeps only the non-theme garnish, so it can no longer compete with the built-ins over names, files, or palettes. While a host has no built-in family: an upgrade from 0.7.x that still has the old theme files keeps working (see *Migration notes*), while a fresh install cannot obtain a pink theme name — stay on `dsh-tui-theme@0.7.3` if you want the themes themselves.
 
 ## What changed in 0.8 (read before upgrading)
 
 | 0.7.x feature | State in 0.8 |
 | --- | --- |
-| Three pink themes (runtime registration / static install) | **Removed.** The host ships the same names, and built-ins outrank any same-named `~/.dsh-tui/themes/*.json` |
+| Three pink themes (runtime registration / static install) | **Removed.** Once the host ships the same names, built-ins outrank any same-named `~/.dsh-tui/themes/*.json` |
 | Cached background follow (`followSystem`) | **Removed** (it only existed to switch between day and night pink) |
 | Shadowed theme-file detection + cleanup dialog | **Removed**; a one-shot toast replaces it (below) |
 | Blossom status line (rich view colours included) | **Kept**, now coloured from a family palette embedded in the package (`src/palette.ts`) |
-| The pink-theme block in `/settings` | **Kept**, reduced to the status-line group |
+| The **dsh-tui-theme** block in `/settings` (named `pink-theme` on 0.7.x) | **Kept**, reduced to the status-line group |
 | Toast channel | **Kept**, for the migration notice above |
 
 Migration notes:
 
-- The plugin no longer writes into `~/.dsh-tui`. The single exception is the notice marker `theme-plugin-notice.json`, written once and only when leftover theme files are actually found. The plugin only **reads** the host's `theme.json` to resolve the active theme.
-- Files a 0.7.x install left behind (`~/.dsh-tui/themes/pink-night.json` and friends) are never deleted. On a host with the built-in family they **no longer take effect** (built-ins win); **if you hand-tuned one, rename it** (say `my-pink.json`) to keep using it.
-- The first launch sends one neutral toast about that and stays quiet afterwards; the files themselves are never touched.
+- The plugin no longer writes into `~/.dsh-tui`. The single exception is the notice marker `theme-plugin-notice.json`, written once — when leftover theme files are found *and* the notice actually reached the host. The plugin only **reads** the host's `theme.json` to resolve the active theme.
+- Files a 0.7.x install left behind (`~/.dsh-tui/themes/pink-*.json`) are never deleted. **On a host that ships the built-in family they no longer take effect** (built-ins outrank same-named files); **a host without the family** (the 0.11.2 baseline included) still parses them as static themes, so an upgrade from 0.7.x keeps working as before.
+- If you hand-tuned one of those files: **the field to change is the JSON `name`** (the host dedupes on it; the file name is just a label). Renaming `pink-night.json` to `my-pink.json` while `name` stays `pink-night` changes nothing — the theme never shows up in `/theme`, and selecting `pink-night` still yields the built-in palette (measured). Change `name` to a non-pink name (changing `displayName` and the file name to `my-pink` too is tidier), then pick it in the host's `/theme`: that is what makes the built-in step aside. Note the status-line scope `statusScope` defaults to `pink-only`, which matches the three `pink-*` names only; after the name change, switch **Status line display** to **All themes** in `/settings`, or the status line disappears.
+- When leftover theme files are found the plugin sends one neutral toast; the marker is written **only once that toast reaches the host**, after which the plugin stays quiet. A host without the toast seam (< 0.10) shows nothing: that boot retries silently and the next one tries again — no nagging, no giving up — so the notice appears exactly once when the host is upgraded. The files themselves are never touched.
 - `~/.dsh-tui/theme-follow.json` is read by nobody now and can be deleted.
 
 ## What it does
@@ -31,7 +32,7 @@ Migration notes:
 | **Blossom status line** | `tuiStatus` | One decorated line above the prompt: ✿ · clock · live turn count; pink themes only by default |
 | **Rich status view** | `tuiStatus.registerView` (≥ 0.10.1) | A one-row React view coloured from the embedded family palette; older hosts fall back to the colourless scalar line |
 | **Settings section** | `tuiSettingsSections` | An editable block in `/settings` (glyph / clock / turns / separator / scope); changes apply immediately |
-| **Migration notice** | `tuiToast` (≥ 0.10.0) | One toast about leftover ≤0.7.x `pink-*.json` files; silently skipped on older hosts |
+| **Migration notice** | `tuiToast` (≥ 0.10.0) | A toast about leftover ≤0.7.x `pink-*.json` files, never repeated once delivered; hosts without the seam retry silently |
 
 **Deliberately out of scope**: no shortcuts, no command registration or override, no input interception, no session events, no system-prompt injection, no theme files installed or registered.
 
@@ -74,7 +75,7 @@ Turning all three decorations (glyph / clock / turns) off hides the whole line. 
 
 ### Screenshot
 
-The dsh-tui-theme block in `/settings` (captured on 0.7.x; since 0.8 the card keeps only the status-line group, with the same fields):
+The dsh-tui-theme block in `/settings` (captured on 0.7.x): both the `pink-theme` title and the *Apply the last saved terminal background* row (`followSystem`) in the picture belong to 0.7.x; since 0.8 the card is titled **dsh-tui-theme**, that field is gone, and only the six-field status-line group remains.
 
 ![dsh-tui-theme settings block](docs/screenshots/settings.png)
 
@@ -84,9 +85,9 @@ Plugin logs are invisible to TUI users, so the one event worth knowing goes thro
 
 | Event | Toast |
 | --- | --- |
-| Leftover ≤0.7.x `pink-*.json` found | ✿ found legacy theme files …: pink-* is a dsh-TUI built-in now and outranks same-named files, this plugin no longer installs themes; rename a file you recoloured to keep using it |
+| Leftover ≤0.7.x `pink-*.json` found | ✿ found legacy theme files …: where dsh-TUI ships the same pink built-ins they outrank the file; if you recoloured one, change its `name` field and set **Status line display** to **All themes** (`pink-only` only matches `pink-*`) |
 
-It is sent once per install (recorded in `~/.dsh-tui/theme-plugin-notice.json`), and only ever names the three files the plugin used to install — a theme you created yourself is never mentioned. The plugin neither deletes nor edits those files.
+The marker is recorded once the notice has **actually reached the host** (in `~/.dsh-tui/theme-plugin-notice.json`). A host without the toast seam (< 0.10) retries silently on every boot — no nagging — and the notice shows up once when the host is upgraded, never again afterwards. It only ever names the three files the plugin used to install — a theme you created yourself is never mentioned. The plugin neither deletes nor edits those files.
 
 ## How the status line relates to themes
 
@@ -101,17 +102,35 @@ It is sent once per install (recorded in `~/.dsh-tui/theme-plugin-notice.json`),
 ```sh
 # Remove the plugin
 dsh plugin --profile dsh-tui remove -w dsh-tui-theme
+```
 
-# Optional: clear the local theme assets left by 0.7.x
+### Clearing the old theme files (before or after uninstalling)
+
+`~/.dsh-tui/themes/pink-*.json` is host user data: **this plugin never deletes it** (since 0.8 it only sends the one-shot notice and never rewrites those files), and uninstalling leaves it alone too. Once the host ships the built-in family those three files stop taking effect and are dead weight — and the host says nothing about it today, so cleaning up is manual:
+
+```sh
+# POSIX: only after checking you have no hand-tuned palette to keep
+# (keep one by changing its `name` first, see Migration notes)
 rm ~/.dsh-tui/themes/pink-{night,day,ansi}.json
 rm ~/.dsh-tui/theme-follow.json
 rm ~/.dsh-tui/theme-plugin-notice.json
 ```
 
+```powershell
+# PowerShell (Windows): same, delete only the files you mean to
+Remove-Item "$env:USERPROFILE\.dsh-tui\themes\pink-night.json",
+            "$env:USERPROFILE\.dsh-tui\themes\pink-day.json",
+            "$env:USERPROFILE\.dsh-tui\themes\pink-ansi.json"
+Remove-Item "$env:USERPROFILE\.dsh-tui\theme-follow.json" -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\.dsh-tui\theme-plugin-notice.json" -ErrorAction SilentlyContinue
+```
+
+`theme-follow.json` (the 0.7.x background-follow cache) and `theme-plugin-notice.json` (this plugin's notice marker) are not themes; deleting them only drops a little history. **Do not delete `theme.json`** — that is the host's record of your current theme.
+
 ## Compatibility
 
 - **Minimum dsh-TUI: 0.8.8** (status line and settings section; measured on 0.9.3). Since 0.10.1 the status line colours itself through the rich status view, and older hosts fall back to the colourless scalar line; hosts without the `dsh-tui-extensions` surface degrade silently instead of erroring.
-- **The pink family must be built into the host**: the `pink-only` test uses the names `pink-night` / `pink-day` / `pink-ansi`. On a host that does not ship them yet (including the 0.11.2 baseline) this plugin offers no themes, so the line stays hidden under `pink-only` — use `statusScope: all-themes`, or stay on `dsh-tui-theme@0.7.3`.
+- **The `pink-only` test is a theme *name*, never a host capability check**: `pink-night` / `pink-day` / `pink-ansi` come from `DSH_TUI_THEME` or `~/.dsh-tui/theme.json`. On a host with the built-in family (not released upstream yet) nothing changes; **an upgrade from 0.7.x that still has `~/.dsh-tui/themes/pink-*.json`** keeps showing the line, because that host still parses those files as static themes. Only a fresh install — host without the family *and* without those files — cannot obtain a pink theme name, and there the line stays hidden under `pink-only`; use `statusScope: all-themes`, or stay on `dsh-tui-theme@0.7.3` for the themes themselves.
 - **Both generations of `dsh-settings` are supported**: ≤ 0.1.6 (dsh-TUI 0.9.x/0.10.x) uses plugin-registered namespaces + `scope.watch`; ≥ 0.1.7 (dsh-TUI 0.11+) uses Config volatile-field projection + `loader/volatile-update` re-reads. The branch is chosen by capability probing, never by parsing versions, and failures on either path are logged rather than swallowed.
 - **dsh runtimes from `0.2.0-rc.1` validate peers at startup**: the host reads each bundle's `peerDependencies`, compares every `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` range against its own runtime version, and skips the whole bundle on a mismatch (stderr reports `skipping profile bundle`). This plugin's peer ranges cover `0.1.0-rc.6`–`0.1.x` and `0.2.0-rc.1`–`0.2.x` (since v0.7.3; the new generation is declared as `^0.2.0-rc.1`), so 0.2 hosts load it normally. The host always evaluates with `includePrerelease` semantics, which is why 0.2 prereleases pass there.
 - Node `^22.19 || >=24`, pure ESM, MIT.

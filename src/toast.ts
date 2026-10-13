@@ -5,8 +5,9 @@
  * The plugin's own logger output is invisible to a TUI user, so the one event
  * still worth surfacing — the migration notice for theme files a ≤0.7.x
  * install left behind (legacyNotice.ts) — goes through the host's toast
- * surface instead. Sending is fire-and-forget: hosts without the seam
- * (dsh-TUI < 0.10) never fire the inject and every send is a silent no-op,
+ * surface instead. A send never blocks on a retry chain, but it does report
+ * the outcome: hosts without the seam (dsh-TUI < 0.10) never fire the inject,
+ * so every attempt is a silent no-op and `onDelivered` stays uncalled —
  * exactly like the other soft-probed seams.
  *
  * The host registers its toast sink late (the dsh-tui row applies after the
@@ -16,6 +17,10 @@
  * before the seam even exists waits on the same schedule. Retries are
  * bounded, unref'd, and cleared with the activation; a toast lost to a host
  * rate limit is not worth fighting — the next real event re-reports.
+ *
+ * The caller hears about the outcome, not just the attempt: a send answers
+ * whether its first attempt landed, and `onDelivered` fires at the moment a
+ * delivery succeeds — which may be a retry, seconds later.
  * @module dsh-tui-theme/toast
  */
 
@@ -33,8 +38,26 @@ interface TuiToastLike {
   ): boolean
 }
 
-/** Send one transient notification; resolves to whether it was delivered. */
-export type ToastSend = (text: string, color?: ToastColor) => boolean
+/** Per-send options: the color to use and the delivery report to call back. */
+export interface ToastSendOptions {
+  /** Host toast color vocabulary; neutral when omitted. */
+  color?: ToastColor
+  /**
+   * Called exactly once, at the moment the text reaches the host's sink — on
+   * the first attempt or on a later retry. Never called when every attempt was
+   * refused (no seam ever arrived, or the host rejected each send). It must
+   * not throw: it runs inside the delivery path.
+   */
+  onDelivered?: () => void
+}
+
+/**
+ * Send one transient notification; resolves to whether the *first* attempt
+ * landed. A send that only lands later reports through `onDelivered`, so a
+ * caller that records something (legacyNotice's marker) can wait for the
+ * delivery instead of the attempt.
+ */
+export type ToastSend = (text: string, options?: ToastSendOptions) => boolean
 
 /** Drop-retry schedule (ms). The first delivery attempt is always immediate. */
 const RETRY_DELAYS_MS = [2_000, 4_000]
@@ -93,19 +116,22 @@ export function startToastRelay(ctx: Context): ToastSend {
     clearPending()
   })
 
-  const attempt = (text: string, color: ToastColor | undefined, depth: number): boolean => {
+  const attempt = (text: string, options: ToastSendOptions, depth: number): boolean => {
     // A seam that has not arrived yet (the extensions row applies after this
     // plugin) retries on the same bounded schedule as a dropped send.
-    if (show !== undefined && show(text, color === undefined ? {} : { color })) return true
+    if (show !== undefined && show(text, options.color === undefined ? {} : { color: options.color })) {
+      options.onDelivered?.()
+      return true
+    }
     if (depth >= retryDelays.length) return false
     const timer = setTimeout(() => {
       pending.delete(timer)
-      attempt(text, color, depth + 1)
+      attempt(text, options, depth + 1)
     }, retryDelays[depth])
     timer.unref?.()
     pending.add(timer)
     return false
   }
 
-  return (text, color) => attempt(text, color, 0)
+  return (text, options) => attempt(text, options ?? {}, 0)
 }

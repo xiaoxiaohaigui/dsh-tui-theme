@@ -8,6 +8,12 @@
  * settings-sections module and its getHostSettingsSections probe landed there.
  * Set DSH_TUI_EXPECTED_VERSION only when an explicit release baseline needs
  * to be pinned; ordinary development verifies the supplied host as-is.
+ *
+ * Besides the assembly assertions this gates the embedded palette: when the
+ * supplied host carries the built-in pink family, its accent /
+ * inactiveShimmer / subtle for all three themes must match src/palette.ts by
+ * value. A host without the family (every released dsh-TUI so far) prints a
+ * one-line skip note instead.
  */
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -44,6 +50,78 @@ if (expectedVersion !== undefined && expectedVersion !== '') {
   assert.equal(hostPackage.version, expectedVersion, `expected dsh-TUI adapter ${expectedVersion}, received ${hostPackage.version}`)
 } else {
   console.log(`* host adapter ${hostPackage.version} (no explicit version pin)`)
+}
+
+// ── Palette drift gate ─────────────────────────────────────────────────────
+// The garnish colours (the family's accent / inactiveShimmer / subtle) are
+// embedded in src/palette.ts: dsh-TUI exposes no palette-query seam, so the
+// plugin cannot read what the host renders with. A host build that carries the
+// built-in family is the only authority on those values, so compare the nine
+// cells against it whenever it is there — an upstream recolour would otherwise
+// leave the garnish silently on the old palette. (The workspace-level probe
+// probes/compare-preset-palettes.mjs checks the whole 73-key palettes; this
+// gate covers the three keys the plugin actually ships.)
+const hostThemePath = join(dirname(adapter), 'theme.js')
+const hostTheme = existsSync(hostThemePath) ? await import(pathToFileURL(hostThemePath).href) : undefined
+const hostThemeNames = Array.isArray(hostTheme?.THEME_NAMES) ? hostTheme.THEME_NAMES : []
+const hostPinkNames = hostThemeNames.filter(name => name.startsWith('pink-'))
+if (typeof hostTheme?.getTheme !== 'function' || hostPinkNames.length === 0) {
+  console.log(
+    `* host carries no built-in pink family (${hostThemePath}); palette equivalence not checked — ` +
+      'point DSH_TUI_ADAPTER_DIR at a build that has it to run this gate',
+  )
+} else {
+  const { PINK_THEMES } = await import(pathToFileURL(join(pluginRoot, 'lib', 'types', 'themePref.js')).href)
+  const { statusColorsFor } = await import(pathToFileURL(join(pluginRoot, 'lib', 'types', 'palette.js')).href)
+  // #rrggbb → the rgb(r,g,b) spelling the host stores palettes in; ansi:* is
+  // already the host's own vocabulary. Both sides normalize, so the comparison
+  // is value-level, not spelling-level.
+  const normalizeColor = value => {
+    if (typeof value !== 'string') return value
+    const hex = /^#([0-9a-fA-F]{6})$/u.exec(value)
+    if (hex !== null) {
+      const packed = Number.parseInt(hex[1], 16)
+      return `rgb(${(packed >> 16) & 255},${(packed >> 8) & 255},${packed & 255})`
+    }
+    const rgb = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/u.exec(value)
+    return rgb === null ? value : `rgb(${rgb[1]},${rgb[2]},${rgb[3]})`
+  }
+  // Names drift before values do: a new or renamed pink built-in means
+  // src/themePref.ts PINK_THEMES and src/palette.ts are stale.
+  const unknown = hostPinkNames.filter(name => !PINK_THEMES.has(name)).sort()
+  assert.deepEqual(
+    unknown,
+    [],
+    `host carries pink built-ins this plugin does not know: ${unknown.join(', ')} — add them to src/themePref.ts PINK_THEMES and src/palette.ts`,
+  )
+  const missing = [...PINK_THEMES].filter(name => !hostThemeNames.includes(name)).sort()
+  assert.deepEqual(
+    missing,
+    [],
+    `this plugin ships pink names this host does not carry: ${missing.join(', ')} — sync src/themePref.ts PINK_THEMES and src/palette.ts with the host`,
+  )
+  // glyph ← accent, clock/turns ← inactiveShimmer, separator ← subtle — the
+  // mapping src/palette.ts documents. Nine cells, host value first.
+  const CELLS = [
+    ['accent', 'glyph'],
+    ['inactiveShimmer', 'text'],
+    ['subtle', 'separator'],
+  ]
+  let compared = 0
+  for (const name of [...PINK_THEMES].sort()) {
+    const palette = hostTheme.getTheme(name)
+    const colors = statusColorsFor(name)
+    for (const [hostKey, pluginKey] of CELLS) {
+      compared += 1
+      assert.equal(
+        normalizeColor(colors[pluginKey]),
+        normalizeColor(palette?.[hostKey]),
+        `${name}.${hostKey}: host ${JSON.stringify(palette?.[hostKey])} vs src/palette.ts ${JSON.stringify(colors[pluginKey])} — sync the embedded table`,
+      )
+    }
+  }
+  assert.equal(compared, 9, 'the family comparison must cover exactly nine cells')
+  console.log('OK palette: 9/9 garnish cells match the host built-in pink family')
 }
 
 const sandbox = mkdtempSync(join(tmpdir(), 'pink-order-'))

@@ -1,7 +1,7 @@
 {
   "name": "dsh-tui-theme",
   "version": "0.8.0-pre.1",
-  "description": "Blossom status line and /settings section for dsh-TUI. The pink theme family (pink-night/pink-day/pink-ansi) is a dsh-TUI built-in since the upstream merge, so this package ships no themes, no shortcuts and no commands.",
+  "description": "Blossom status line and /settings section for dsh-TUI. The pink theme family (pink-night/pink-day/pink-ansi) has moved upstream and will ship as a dsh-TUI built-in (PR #1294, not merged yet), so this package ships no themes, no shortcuts and no commands.",
   "type": "module",
   "main": "lib/types/index.js",
   "types": "lib/types/index.d.ts",

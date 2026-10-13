@@ -8,8 +8,9 @@
  * themselves the suite pins the two invariants the handover depends on:
  *
  *  1. the plugin never writes into the host's data directory — the single
- *     exception is the migration-notice marker, written once, only when a
- *     legacy pink-* file is actually there (scenarios 12 and 17);
+ *     exception is the migration-notice marker, written once and only after a
+ *     notice actually reached the host's toast sink while a legacy pink-* file
+ *     was there (scenarios 11, 12 and 17);
  *  2. it never registers a theme, installs a theme file, or repairs one, even
  *     when a runtime theme service is present (scenario 17).
  *
@@ -57,6 +58,7 @@ const { setToastRetryDelaysForTests } = await import('../lib/types/toast.js')
 const { readThemePref } = await import('../lib/types/themePref.js')
 const { statusColorsFor } = await import('../lib/types/palette.js')
 const { findLegacyThemeFiles } = await import('../lib/types/legacyNotice.js')
+const { displayCells } = await import('../lib/types/ornament.js')
 
 assert.equal(name, 'dsh-tui-theme')
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -662,20 +664,35 @@ const waitFor = async predicate => {
   }
 
   // 11a. The toast seam trails apply on a real host (extensions row), so the
-  // notice must survive on the bounded retry until the sink shows up.
+  // notice must survive on the bounded retry until the sink shows up — and the
+  // marker that keeps later boots quiet must follow that delivery, not the
+  // attempt (the failure mode R-005 described: a marker written for a notice
+  // nobody could see swallows the one-time notice forever).
   seedLegacyFile()
   const retryDeliveries = []
   const retryContext = makeStubCtx({ deferToast: true })
   await applyAndSettle(retryContext.ctx)
   assert.equal(retryDeliveries.length, 0, 'no sink yet, no delivery')
+  assert.equal(
+    existsSync(join(sandboxData, NOTICE_FILE)),
+    false,
+    'a notice that has not landed yet is not recorded',
+  )
   retryContext.record.activateToast(fakeToast(retryDeliveries, { dropFirst: 1 }))
   await waitFor(() => retryDeliveries.length > 0)
   assert.equal(retryDeliveries.length, 1, 'a dropped toast is retried and delivered')
   assert.match(retryDeliveries[0][0], /pink-night\.json/)
   assert.equal(retryDeliveries[0][1], undefined, 'the notice is neutral, not an error')
+  await waitFor(() => existsSync(join(sandboxData, NOTICE_FILE)))
+  assert.equal(
+    existsSync(join(sandboxData, NOTICE_FILE)),
+    true,
+    'the marker follows a notice delivered on a retry',
+  )
 
-  // 11b. A sink that never arrives keeps the send bounded: the chain gives up
-  // and a late seam must not resurrect an abandoned toast.
+  // 11b. A sink that never arrives keeps the send bounded: the chain gives up,
+  // a late seam must not resurrect an abandoned toast, and no marker may be
+  // left behind — that marker is what would swallow the notice for good.
   setToastRetryDelaysForTests([5, 5])
   const lateDeliveries = []
   const lateContext = makeStubCtx({ deferToast: true })
@@ -685,6 +702,26 @@ const waitFor = async predicate => {
   lateContext.record.activateToast(fakeToast(lateDeliveries))
   await settle()
   assert.equal(lateDeliveries.length, 0, 'an abandoned toast is not resurrected by a late seam')
+  assert.equal(
+    existsSync(join(sandboxData, NOTICE_FILE)),
+    false,
+    'a notice no sink ever accepted leaves no marker',
+  )
+
+  // 11c. Because 11b recorded nothing, the next boot with a working sink still
+  // issues the notice: a host upgraded to 0.10+ (and later to the built-in
+  // family) hears the one thing this plugin exists to say.
+  setToastRetryDelaysForTests([20, 20, 20, 20])
+  const nextBootDeliveries = []
+  const nextBoot = makeStubCtx({ toast: fakeToast(nextBootDeliveries) })
+  await applyAndSettle(nextBoot.ctx)
+  assert.equal(nextBootDeliveries.length, 1, 'the boot after a failed notice still delivers it')
+  assert.match(nextBootDeliveries[0][0], /pink-night\.json/)
+  assert.equal(
+    existsSync(join(sandboxData, NOTICE_FILE)),
+    true,
+    'that delivery records the marker',
+  )
 
   setToastRetryDelaysForTests([2_000, 4_000])
   rmSync(sandboxThemes, { recursive: true, force: true })
@@ -708,19 +745,38 @@ const waitFor = async predicate => {
   assert.equal(quietDeliveries.length, 0, 'no legacy file, no notice')
   assert.equal(existsSync(join(sandboxData, NOTICE_FILE)), false, 'no marker without a notice')
 
-  // A leftover plugin file: one toast naming it, and a marker so the next boot
-  // stays quiet. The file itself is never touched — deleting a user's theme is
-  // not this plugin's business any more.
+  // Leftover plugin files: one toast naming them, and a marker so the next
+  // boot stays quiet. The files themselves are never touched — deleting a
+  // user's theme is not this plugin's business any more. All three names are
+  // written because the host caps toast text at 200 cells: the longest list
+  // must still fit untruncated (asserted below).
   const legacy = join(sandboxThemes, 'pink-day.json')
   writeFileSync(legacy, '{ "name": "pink-day", "colors": {} }')
-  assert.deepEqual(findLegacyThemeFiles(), ['pink-day.json'])
+  writeFileSync(join(sandboxThemes, 'pink-ansi.json'), '{ "name": "pink-ansi", "colors": {} }')
+  writeFileSync(join(sandboxThemes, 'pink-night.json'), '{ "name": "pink-night", "colors": {} }')
+  assert.deepEqual(findLegacyThemeFiles(), ['pink-ansi.json', 'pink-day.json', 'pink-night.json'])
   const deliveries = []
   const first = makeStubCtx({ toast: fakeToast(deliveries) })
   await applyAndSettle(first.ctx)
   assert.equal(deliveries.length, 1, 'the leftover file is pointed out exactly once')
   assert.match(deliveries[0][0], /pink-day\.json/)
   assert.match(deliveries[0][0], /dsh-TUI/)
-  assert.equal(existsSync(join(sandboxData, NOTICE_FILE)), true, 'the notice is recorded')
+  // The notice is generation-neutral: the built-in precedence is a condition,
+  // never a claim that this host has the family (0.10/0.11 ship tuiToast and
+  // no pink palettes, and there the file is still the theme's only source).
+  assert.match(deliveries[0][0], /若已内置同名粉主题/)
+  // The host dedupes a static theme by its JSON `name`, not by the file name,
+  // so the advice must name that field — "rename the file" alone changes
+  // nothing (probed against the pink-carrying host build).
+  assert.match(deliveries[0][0], /name/)
+  // Moving off the pink names takes the theme out of PINK_THEMES, so the scope
+  // fix has to travel with the advice instead of silently hiding the line.
+  assert.match(deliveries[0][0], /所有主题/)
+  assert.ok(
+    displayCells(deliveries[0][0]) <= 200,
+    `the longest notice must fit the host's 200-cell toast cap, got ${displayCells(deliveries[0][0])}`,
+  )
+  assert.equal(existsSync(join(sandboxData, NOTICE_FILE)), true, 'the delivered notice is recorded')
   assert.equal(
     readFileSync(legacy, 'utf8'),
     '{ "name": "pink-day", "colors": {} }',

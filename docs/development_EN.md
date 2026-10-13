@@ -8,7 +8,7 @@ Everything the README leaves out: environment, install prerequisites, verificati
 
 - Node `^22.19 || >=24`, pure ESM; TypeScript compiles to `lib/types/`, the build output is committed, and CI checks it against a fresh build.
 - Host baseline: the devDependency pins `@deepseek-harness-tui/dsh-tui@0.11.2`, engine packages pin `0.2.0-rc.1`; the devDependency `dsh-settings` belongs to the ≥ 0.1.7 Config-projection generation, so `verify:settings` runs real projection assertions by default (the ≤ 0.1.6 path is covered by scenario 2 of `verify.mjs` and by a manual `DSH_SETTINGS_DIR` run).
-- ⚠️ The 0.11.2 host has **no built-in pink family**: the `pink-only` test never passes there, which is why `verify.mjs` writes `pink-night` into its own sandbox `theme.json` to make the line visible. Real-machine checks of the built-in family need a host build that carries it.
+- ⚠️ The 0.11.2 host has **no built-in pink family**, but it still parses `~/.dsh-tui/themes/pink-*.json` as static themes. The plugin's `pink-only` test is a theme *name* (`DSH_TUI_THEME` / `theme.json`), never a host capability check — which is why `verify.mjs` only has to write `pink-night` into its own sandbox `theme.json` to make the line visible. On a real host without the family, that name can only come from the theme files a 0.7.x install left behind. Real-machine checks of the built-in family need a host build that carries it.
 
 ## Install prerequisites
 
@@ -26,7 +26,7 @@ npm run verify           # 17 scenarios: both status paths, both settings genera
 npm run verify:package   # release manifest (npm pack --dry-run)
 npm run verify:peers     # peer coverage contract (every validated runtime must be accepted by a peer range)
 npm run verify:settings  # dsh-settings generation projection (capability-probed; legacy installs report and exit 0)
-npm run verify:host      # build + real-host assembly (the 0.11.2 devDependency)
+npm run verify:host      # build + real-host assembly (the 0.11.2 devDependency) + palette gate (compared only on hosts that carry the pink family)
 npm run release:check    # build + verify + verify:package + verify:peers + verify:settings
 ```
 
@@ -70,13 +70,14 @@ Maintaining it:
 1. When upstream changes a family colour (or adds a pink theme name), update the table in `src/palette.ts`;
 2. If a new theme name appears, update `PINK_THEMES` in `src/themePref.ts` too;
 3. Scenarios 8 and 15 of `scripts/verify.mjs` pin the three palettes and the "non-pink stays uncoloured" rule — run `npm run verify` after the change;
-4. To confirm key-for-key equality with the host, run `node probes/compare-preset-palettes.mjs` against the host worktree (a workspace-level probe, see `D:\dsh-tui-theme\probes\README.md`).
+4. Automatic comparison with the host: when the host build carries the built-in family, `verify:host` imports the host's `lib/types/theme.js` by path and compares its nine cells (`accent` / `inactiveShimmer` / `subtle` × three themes) against `src/palette.ts` by value (`#rrggbb` and `rgb()` normalized first), asserting as well that the host's pink names and `PINK_THEMES` agree; a host without the family (the 0.11.2 baseline included) prints a one-line skip note. For the full 73-key check, run the workspace-level probe `node probes/compare-preset-palettes.mjs` (see `D:\dsh-tui-theme\probes\README.md`).
 
 ## Migration notice and its marker (`src/legacyNotice.ts`)
 
 - It looks for the three `pink-*.json` files the plugin used to install in `~/.dsh-tui/themes/`; a theme you created yourself is never mentioned.
-- On a hit, and when `~/.dsh-tui/theme-plugin-notice.json` is absent, it sends one neutral toast and writes the marker; every later boot stays quiet.
-- The marker records the *attempt*, not a confirmed render: `tuiToast` and the built-in pink family landed in the same 0.10 line, so a host without the seam does not need the notice anyway, while a repeated one would nag.
+- On a hit, and when `~/.dsh-tui/theme-plugin-notice.json` is absent, it sends one neutral toast and writes the marker **only once that toast is confirmed delivered**; every later boot stays quiet.
+- The marker records a notice the user actually received, not an attempt: the toast seam (0.10) postdates this plugin's supported floor (0.8.8), so a host without the seam has no built-ins either and its legacy files still work — writing the marker there would swallow the notice for good (the marker outlives an upgrade), while the upgrade to a host carrying the built-in family is exactly when the user needs to hear it. An undelivered notice therefore records nothing: that boot retries silently (the chain gives up rather than nagging) and the next boot tries again until one delivery lands. The delivery report comes from `src/toast.ts` (`send()` answers the first attempt; a retry that lands reports through `onDelivered`), and scenarios 11/12 of `verify.mjs` assert "no marker without a delivery, a marker once one lands, and a failed notice re-issued on the next boot".
+- The wording must hold for both host generations: state the built-in precedence as a condition ("where dsh-TUI ships the same pink built-ins"), name the JSON `name` field when advising a rename (the host dedupes on it; renaming the file alone does nothing), and pair that with its consequence — a renamed theme leaves `PINK_THEMES`, so the default `pink-only` scope would hide the status line and the notice has to point at the display scope too. Keep the README migration notes, toast table and the *Clearing the old theme files* section in step; scenario 12 of `verify.mjs` asserts those semantics (including `name`) and that the longest wording (three file names) fits the host's 200-cell toast cap.
 - To re-test locally, delete the marker; the plugin never deletes or edits the files it mentions.
 
 ## One source of truth for the editable surface

@@ -8,7 +8,7 @@
 
 - Node `^22.19 || >=24`，纯 ESM；TypeScript 编译到 `lib/types/`，构建产物随仓库提交，CI 会校验它与全新构建一致。
 - 宿主基线：devDependency 钉住 `@deepseek-harness-tui/dsh-tui@0.11.2`，引擎包同代钉在 `0.2.0-rc.1`；devDependency 的 `dsh-settings` 是 ≥ 0.1.7 的 Config 投影世代，因此 `verify:settings` 在本仓默认就会真跑投影断言（旧代 ≤ 0.1.6 路径由 `verify.mjs` 场景 2 与 `DSH_SETTINGS_DIR` 手验覆盖）。
-- ⚠️ 0.11.2 宿主**没有内置樱族**：`pink-only` 判据恒不成立，靠 `verify.mjs` 自己往沙箱 `theme.json` 写 `pink-night` 才能让状态行可见。真机验证内置樱族要用带该分支的宿主构建。
+- ⚠️ 0.11.2 宿主**没有内置樱族**，但仍把 `~/.dsh-tui/themes/pink-*.json` 当静态主题解析。插件的 `pink-only` 判据只是主题名（`DSH_TUI_THEME` / `theme.json`），与宿主是否内置无关，所以 `verify.mjs` 往沙箱 `theme.json` 写 `pink-night` 就能让状态行可见；真机上没有内置樱族时，粉主题名只能来自 0.7.x 遗留的主题文件。真机验证内置樱族要用带该分支的宿主构建。
 
 ## 安装前提
 
@@ -26,7 +26,7 @@ npm run verify           # 17 个场景：状态行两代路径、设置卡两�
 npm run verify:package   # 发布清单（npm pack --dry-run）
 npm run verify:peers     # peer 覆盖契约（已验证的运行时版本必须被 peer 段覆盖）
 npm run verify:settings  # dsh-settings 代际投影断言（按能力探测，旧代报告跳过并以 0 退出）
-npm run verify:host      # 构建 + 真宿主装配（devDependency 的 0.11.2）
+npm run verify:host      # 构建 + 真宿主装配（devDependency 的 0.11.2）+ 调色板门禁（宿主带内置樱族时才实际比对）
 npm run release:check    # build + verify + verify:package + verify:peers + verify:settings
 ```
 
@@ -70,13 +70,14 @@ CI 只覆盖 0.11.2 零配置线；0.9.x 兼容回归仍需本机按上面的 en
 1. 上游改了家族色值（或新增粉主题名）时，同步改 `src/palette.ts` 的表；
 2. 若新增了主题名，同时更新 `src/themePref.ts` 的 `PINK_THEMES`；
 3. `scripts/verify.mjs` 场景 8/15 钉住三套取值与非粉不上色，改完跑 `npm run verify`；
-4. 想确认与宿主逐键一致：对宿主 worktree 跑 `node probes/compare-preset-palettes.mjs`（工作区级探针，见 `D:\dsh-tui-theme\probes\README.md`）。
+4. 与宿主的自动比对：`verify:host` 在宿主构建带内置樱族时按路径 import 宿主的 `lib/types/theme.js`，把 9 个格（`accent` / `inactiveShimmer` / `subtle` × 三套）与 `src/palette.ts` 逐值比对（`#rrggbb` 与 `rgb()` 归一后比较），并断言宿主的粉主题名集与 `PINK_THEMES` 一致；宿主没有内置樱族（含 0.11.2 基线）时打印一行跳过说明。整个 73 键的复核仍用工作区级探针：`node probes/compare-preset-palettes.mjs`（见 `D:\dsh-tui-theme\probes\README.md`）。
 
 ## 迁移提示与标记文件（`src/legacyNotice.ts`）
 
 - 检查 `~/.dsh-tui/themes/` 里是否存在插件当年装过的 `pink-*.json`；只认这三个文件名，用户自建主题永不被提及。
-- 命中且标记文件 `~/.dsh-tui/theme-plugin-notice.json` 不存在 → 发一条中性 toast 并写标记；之后每次启动都保持安静。
-- 标记记的是“已提示过”，与 toast 是否真的渲染无关：`tuiToast` 与内置樱族同在 0.10 线，缺接缝的宿主本来也不需要这条提示，而重复提示会变成打扰。
+- 命中且标记文件 `~/.dsh-tui/theme-plugin-notice.json` 不存在 → 发一条中性 toast；**toast 确认送达后**才写标记，之后每次启动都保持安静。
+- 标记记的是“用户确实收到了这条提示”，不是“尝试发过”：toast 接缝（0.10）晚于本插件的支持下限（0.8.8），缺接缝的宿主必定也没有内置樱族，那里的旧文件照常生效——此刻写标记等于把这条提示永久吞掉（标记跨升级存活），而宿主一旦升到带内置樱族的版本，提示恰恰是用户唯一能得到的告知。因此未送达时不写标记：当次启动静默重试（重试链耗尽即放弃，不打扰用户），下次启动再来，直到真正送达一次为止。投递回报由 `src/toast.ts` 提供（`send()` 的返回值是首次尝试的结果，重试成功走 `onDelivered`），`verify.mjs` 场景 11/12 断言「未送达不写标记、送达才写、失败的提示会在下次启动补发」。
+- 文案必须对两代宿主都成立：内置优先级写成条件句（「若已内置同名粉主题」），换名建议要指向文件里的 `name` 字段（宿主按它去重，只改文件名不生效），并带上后果——换名后主题名不再属于 `PINK_THEMES`，默认 `pink-only` 会让状态行消失，所以要同时提示把展示范围改成「所有主题」。改文案时同步 README 的迁移要点、toast 表与「旧主题文件清理」小节；`verify.mjs` 场景 12 断言这几处语义（含 `name`），并检查最长文案（三个文件名）不超宿主的 200 单元格 toast 上限。
 - 本地复测：删掉标记文件即可让提示重新出现；插件不会删除或修改被提到的主题文件。
 
 ## 可编辑面只有一个事实来源
