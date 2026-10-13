@@ -4,7 +4,7 @@
 
 [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI) 的花符状态行插件：输入框上方一行 `✿ · 时钟 · 轮数`，外加一个 `/settings` 可编辑区块与一条一次性迁移提示，全部走官方接缝，不注册快捷键或命令。
 
-> **0.8 起本插件不再提供主题。** 樱花粉三套（`pink-night` / `pink-day` / `pink-ansi`）已移交上游：上游 PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) 已于 2026-10-12 合并进 dsh-TUI 主线（merge `4f4980fe`），将作为**宿主内置预设**随下一个 dsh-TUI 版本发布（发版前 `@latest` 上仍是 0.14.0，没有内置樱族），调色板与主题键由上游维护；本包只保留非主题的装饰部分，也就不会再与内置主题抢名字、抢文件或抢调色板。宿主尚未内置樱族期间：从 0.7.x 升上来、旧主题文件还在的用户照旧可用（见「迁移要点」）；全新安装拿不到粉主题名，需要主题本身时请继续用 `dsh-tui-theme@0.7.5`。
+> **0.8 起本插件不再提供主题。** 樱花粉三套（`pink-night` / `pink-day` / `pink-ansi`）已移交上游：上游 PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) 已于 2026-10-12 合并进 dsh-TUI 主线（merge `4f4980fe`），并**自 dsh-TUI 0.15.0 起作为宿主内置预设发布**，调色板与主题键由上游维护；本包只保留非主题的装饰部分，也就不会再与内置主题抢名字、抢文件或抢调色板。宿主 < 0.15.0 时粉主题名只能来自 0.7.x 留下的旧主题文件（见「迁移要点」），那些宿主上全新安装拿不到粉主题名，需要主题本身时请继续用 `dsh-tui-theme@0.7.5`。
 
 ## 0.8 变更（升级前请读）
 
@@ -20,7 +20,7 @@
 迁移要点：
 
 - 插件不再写入 `~/.dsh-tui`（唯一例外是迁移提示的标记文件 `theme-plugin-notice.json`：发现旧主题文件、且提示确实送达宿主后才写一次）。插件只**读**宿主的 `theme.json` 判断当前主题。
-- 0.7.x 装过的 `~/.dsh-tui/themes/pink-*.json` 等文件不会被删除。**宿主已内置樱族时**它们不再生效（内置优先于同名文件）；**尚未内置樱族的宿主**（含 0.14.0 基线）仍把这些文件当静态主题解析，从 0.7.x 升上来的用户照旧可用。
+- 0.7.x 装过的 `~/.dsh-tui/themes/pink-*.json` 等文件不会被删除。**宿主已内置樱族时**（dsh-TUI ≥ 0.15.0）它们不再生效（内置优先于同名文件）；**0.15.0 之前的宿主**仍把这些文件当静态主题解析，从 0.7.x 升上来的用户照旧可用。
 - 如果你手动改过这些文件的配色：**要改的是文件里的 `name` 字段**（宿主按它去重，文件名只是标签）。只把 `pink-night.json` 改名成 `my-pink.json` 而 `name` 仍是 `pink-night`，`/theme` 列表里不会出现它，选中 `pink-night` 拿到的仍是内置调色板——等于没改（实测）。把 `name` 改成别的粉外名（建议 `displayName`、文件名一起改成 `my-pink`），再到宿主 `/theme` 里选中它，内置才会让位给你这一份。注意状态行展示范围 `statusScope` 默认是 `pink-only`，只认 `pink-*` 三个名字——换名后请到 `/settings` 把「状态行展示」改成「所有主题」，否则状态行会消失。
 - 发现旧主题文件后会发一条中性 toast 提示；**提示送达宿主后**才记标记、之后不再重复。宿主还没有 toast 接缝（< 0.10）时看不到提示：插件当次启动静默重试，下次启动再试，不打扰也不放弃——等宿主升上来，提示照常出现一次。被提到的文件不会被动过。
 - `~/.dsh-tui/theme-follow.json` 已无人读取，可自行删除。
@@ -129,7 +129,7 @@ Remove-Item "$env:USERPROFILE\.dsh-tui\theme-plugin-notice.json" -ErrorAction Si
 ## 兼容性
 
 - **dsh-TUI 下限 0.8.8**（状态行与设置面板，0.9.3 实测）。0.10.1 起状态行走富状态视图按内嵌调色板上色，更旧宿主自动回退无色标量行；缺 `dsh-tui-extensions` 扩展面的宿主自动静默降级，不报错。
-- **`pink-only` 判据只是主题名，不检查宿主是否内置**：`pink-night` / `pink-day` / `pink-ansi` 三个名字取自 `DSH_TUI_THEME` 或 `~/.dsh-tui/theme.json`。宿主内置樱族（上游已合并进主线，尚未随宿主发版）时一切照旧；**从 0.7.x 升上来、`~/.dsh-tui/themes/pink-*.json` 还在的用户**，宿主仍把那些文件当静态主题解析，状态行照常显示。只有「宿主未内置樱族 + 没有这些旧文件」的全新安装拿不到粉主题名，`pink-only` 下状态行不会显示——此时改用 `statusScope: all-themes`，或在旧宿主上继续使用 `dsh-tui-theme@0.7.5`。
+- **主题由宿主提供**：`pink-night` / `pink-day` / `pink-ansi` 自 dsh-TUI 0.15.0 起随宿主内置（上游 PR #1294 维护调色板与主题键），本包不再携带。**`pink-only` 判据只是主题名，不检查宿主是否内置**：三个名字取自 `DSH_TUI_THEME` 或 `~/.dsh-tui/theme.json`——在 ≥ 0.15.0 的宿主上与内置名天然一致。**宿主 < 0.15.0 时**：从 0.7.x 升上来、`~/.dsh-tui/themes/pink-*.json` 还在的用户照常显示（宿主仍把那些文件当静态主题解析）；只有「未内置 + 没有这些旧文件」的全新安装拿不到粉主题名，`pink-only` 下状态行不会显示——此时改用 `statusScope: all-themes`，或继续使用 `dsh-tui-theme@0.7.5`。
 - **宿主 0.14.0 起多一层「品牌默认档」，可以盖过 `theme.json`**：没有显式 `theme` prop 或 `DSH_TUI_THEME` 时，宿主按品牌（`DSH_TUI_BRAND` / 设置项 `dsh-tui.brand`）选 `claude-dark`/`claude-paper`（claude）或 `codex-lavender`/`codex-paper`（codex），且不对 `theme.json` 加锁。此时宿主渲染的是品牌主题，而插件仍按 `theme.json` 里的名字判定：那里若还是 `pink-*`，✿ 行照常显示并按樱族上色，与宿主实际渲染不一致——纯观感偏差，不会崩溃。默认品牌 `deepseek` 不在品牌表内，本插件也不读品牌设置：这是有意接受的一处偏差。
 - **`dsh-settings` 两代都支持**：≤ 0.1.6（dsh-TUI 0.9.x/0.10.x）走插件注册命名空间 + `scope.watch`；≥ 0.1.7（dsh-TUI 0.11+）走 Config volatile 字段投影 + `loader/volatile-update` 重读。判定按能力探测，不解析版本号；两条路径的失败都写日志而不是静默。
 - **dsh 运行时 `0.2.0-rc.1` 起有启动期 peer 校验**：宿主读 bundle 的 `peerDependencies`，把 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 段与运行时版本比对，不匹配就跳过整个 bundle（stderr 提示 `skipping profile bundle`）。本插件的 peer 段覆盖 `0.1.0-rc.6`–`0.1.x` 与 `0.2.0-rc.1`–`0.2.x`（自 v0.7.3 起，新世代写作 `^0.2.0-rc.1`），因此 0.2 宿主正常加载。宿主校验固定用 `includePrerelease` 语义，故 0.2 线的预发布档同样放行。

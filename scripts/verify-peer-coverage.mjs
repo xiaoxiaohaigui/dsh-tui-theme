@@ -51,6 +51,10 @@ const VALIDATED_RUNTIME_VERSIONS = [
   '0.1.7-rc.1',
   '0.1.7-rc.2',
   '0.2.0-rc.1',
+  // 0.2.0-rc.2 is the runtime dsh-TUI 0.15.0 targets and the one the plugin is
+  // real-machine tested on (dsh CLI 0.2.0-rc.2 + host 0.15.0, 2026-10-13). The
+  // caret line below already covers it; listing it keeps that coverage asserted.
+  '0.2.0-rc.2',
 ]
 
 /**
