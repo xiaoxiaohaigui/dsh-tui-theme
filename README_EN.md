@@ -6,6 +6,42 @@ A blossom status line for [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI): one
 
 > **Since 0.8 this package ships no themes.** The sakura-pink family (`pink-night` / `pink-day` / `pink-ansi`) has moved upstream: PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) merged into dsh-TUI's main line on 2026-10-12 (merge `4f4980fe`) and **ships as a built-in dsh-TUI preset since dsh-TUI 0.15.0**, with its palettes and theme keys maintained there; this package keeps only the non-theme garnish, so it can no longer compete with the built-ins over names, files, or palettes. Below dsh-TUI 0.15.0 a pink theme name can only come from the theme files a 0.7.x install left behind (see *Migration notes*), so a fresh install there cannot obtain one — stay on `dsh-tui-theme@0.7.5` if you want the themes themselves.
 
+## Pick one of two paths
+
+**The sakura-pink family is a built-in dsh-TUI preset since dsh-TUI 0.15.0** (upstream PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) is merged and released; `/theme` offers `pink-night` / `pink-day` / `pink-ansi` directly). Since 0.8 this plugin only provides the blossom status line, so choose one:
+
+**① You want the themes, not the status line** — remove the plugin and clean up the theme files 0.7.x left behind (the built-ins shadow them now, so they are dead weight):
+
+```sh
+dsh plugin --profile dsh-tui remove -w dsh-tui-theme
+
+# POSIX: only after checking you have no hand-tuned palette to keep
+# (keep one by changing its `name` first, see Migration notes)
+rm ~/.dsh-tui/themes/pink-{night,day,ansi}.json
+rm -f ~/.dsh-tui/theme-follow.json ~/.dsh-tui/theme-plugin-notice.json
+```
+
+```powershell
+# PowerShell (Windows): same, delete only the files you mean to
+dsh plugin --profile dsh-tui remove -w dsh-tui-theme
+
+Remove-Item "$env:USERPROFILE\.dsh-tui\themes\pink-night.json",
+            "$env:USERPROFILE\.dsh-tui\themes\pink-day.json",
+            "$env:USERPROFILE\.dsh-tui\themes\pink-ansi.json"
+Remove-Item "$env:USERPROFILE\.dsh-tui\theme-follow.json" -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\.dsh-tui\theme-plugin-notice.json" -ErrorAction SilentlyContinue
+```
+
+> ⚠️ Do not delete `~/.dsh-tui/theme.json` — that is the host's record of your current theme. Each command is explained under [Clearing the old theme files](#clearing-the-old-theme-files-before-or-after-uninstalling) below.
+
+**② You want the blossom status line** — update to this release (it ships no theme files, only the status line):
+
+```sh
+dsh plugin --profile dsh-tui add -w dsh-tui-theme@0.8.0
+```
+
+More themes may follow — thanks for using it 🌸
+
 ## What changed in 0.8 (read before upgrading)
 
 | 0.7.x feature | State in 0.8 |

@@ -6,6 +6,41 @@
 
 > **0.8 起本插件不再提供主题。** 樱花粉三套（`pink-night` / `pink-day` / `pink-ansi`）已移交上游：上游 PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) 已于 2026-10-12 合并进 dsh-TUI 主线（merge `4f4980fe`），并**自 dsh-TUI 0.15.0 起作为宿主内置预设发布**，调色板与主题键由上游维护；本包只保留非主题的装饰部分，也就不会再与内置主题抢名字、抢文件或抢调色板。宿主 < 0.15.0 时粉主题名只能来自 0.7.x 留下的旧主题文件（见「迁移要点」），那些宿主上全新安装拿不到粉主题名，需要主题本身时请继续用 `dsh-tui-theme@0.7.5`。
 
+## 先选一条路
+
+**樱花粉主题已随 dsh-TUI 0.15.0 成为宿主预置主题**（上游 PR [#1294](https://github.com/ccch1mneyyy/dsh-TUI/pull/1294) 已合并并发版，`/theme` 里直接可选 `pink-night` / `pink-day` / `pink-ansi`）。本插件从 0.8 起只提供花符状态行，按你的需要二选一：
+
+**① 只要主题、不需要状态行** —— 卸载本插件，并把 0.7.x 当年写下的主题文件一起清掉（它们已被内置同名主题遮蔽，留着只是死重量）：
+
+```sh
+dsh plugin --profile dsh-tui remove -w dsh-tui-theme
+
+# POSIX：确认没有要保留的手改配色后（要保留先按「迁移要点」改文件里的 name）
+rm ~/.dsh-tui/themes/pink-{night,day,ansi}.json
+rm -f ~/.dsh-tui/theme-follow.json ~/.dsh-tui/theme-plugin-notice.json
+```
+
+```powershell
+# PowerShell（Windows）：同上，可只删其中几个
+dsh plugin --profile dsh-tui remove -w dsh-tui-theme
+
+Remove-Item "$env:USERPROFILE\.dsh-tui\themes\pink-night.json",
+            "$env:USERPROFILE\.dsh-tui\themes\pink-day.json",
+            "$env:USERPROFILE\.dsh-tui\themes\pink-ansi.json"
+Remove-Item "$env:USERPROFILE\.dsh-tui\theme-follow.json" -ErrorAction SilentlyContinue
+Remove-Item "$env:USERPROFILE\.dsh-tui\theme-plugin-notice.json" -ErrorAction SilentlyContinue
+```
+
+> ⚠️ 别删 `~/.dsh-tui/theme.json`——那是宿主记录你当前主题选择的文件。清理命令的逐条说明见下面的「[旧主题文件清理](#旧主题文件清理卸载前后都适用)」。
+
+**② 需要花符状态行** —— 更新到本版（不带主题文件，只保留状态行）：
+
+```sh
+dsh plugin --profile dsh-tui add -w dsh-tui-theme@0.8.0
+```
+
+之后可能会更新更多主题，感谢使用 🌸
+
 ## 0.8 变更（升级前请读）
 
 | 0.7.x 的能力 | 0.8 的状态 |
@@ -39,8 +74,8 @@
 ## 快速开始
 
 ```sh
-# 0.8 尚未发版（npm 上 @latest 是带主题的 0.7.5）。发布后预发布版需显式版本：
-# dsh plugin --profile dsh-tui add -w dsh-tui-theme@0.8.0-pre.2
+# 更新到本版（0.8 起不带主题文件，只保留状态行；主题由宿主内置提供）
+dsh plugin --profile dsh-tui add -w dsh-tui-theme@0.8.0
 ```
 
 本地 tarball 安装（开发 / 自用）：
@@ -49,7 +84,7 @@
 cd /path/to/dsh-tui-theme
 npm run build
 npm pack
-dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-0.8.0-pre.2.tgz
+dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-0.8.0.tgz
 ```
 
 > 不要以本地源码目录作为依赖安装：其开发 `node_modules` 可能与 dsh-TUI 宿主解析出不同的 Cordis/DSH framework instance，插件会无法注册服务。
