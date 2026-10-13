@@ -31,6 +31,7 @@ const files = new Set(packed.files.map(entry => entry.path))
 for (const required of [
   'package.json',
   'README.md',
+  'README_EN.md',
   'LICENSE',
   'cordis.patch.yml',
   'lib/types/index.js',
