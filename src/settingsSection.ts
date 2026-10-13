@@ -11,8 +11,8 @@
  * value instead of a misleading blank.
  *
  * Two generations, branched by capability (never by version),
- * `dsh-settings`'s 0.1.7 break being the reason
- * (docs/decisions/2026-09-24-settings-generation-adaptation.md):
+ * `dsh-settings`'s 0.1.7 break being the reason (both paths are listed under
+ * the compatibility notes in README.md):
  *
  * - **≤0.1.6** (dsh-TUI 0.9.x/0.10.x) — `settings.register(ns, schema)` owns
  *   the namespace. The card's paths resolve against the scope schema declared

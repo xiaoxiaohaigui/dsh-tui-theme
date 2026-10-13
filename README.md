@@ -31,7 +31,7 @@
 | --- | --- | --- |
 | **花符状态行** | `tuiStatus` | 输入框上方一行装饰：✿ · 时钟 · 实时轮数；默认仅在内置樱花粉主题下显示 |
 | **富状态视图** | `tuiStatus.registerView`（≥ 0.10.1） | 一行 React 视图，用包内嵌的家族调色板上色；旧宿主自动回退到无色标量行 |
-| **设置面板** | `tuiSettingsSections` | `/settings` 里一个可编辑区块（花符 / 时钟 / 轮数 / 分隔符 / 展示范围），保存即时生效 |
+| **设置面板** | `tuiSettingsSections` | `/settings` 里一个可编辑区块（花符 / 花符字符 / 时钟 / 轮数 / 分隔符 / 展示范围），保存即时生效 |
 | **迁移提示** | `tuiToast`（≥ 0.10.0） | 发现 ≤0.7.x 留下的 `pink-*.json` 时提示，送达后不再重复；无接缝的旧宿主静默重试、不报错 |
 
 **明确不做的事**：不注册快捷键、不注册或修改命令、不拦截输入、不追加会话事件、不注入 system prompt、不安装或注册任何主题文件。
@@ -92,7 +92,7 @@ dsh plugin --profile dsh-tui add -w ./dsh-tui-theme-0.8.0-pre.2.tgz
 ## 状态行与主题的关系
 
 - 状态行是**装饰**：宿主负责渲染、截断与清理，插件只提交标量文本或一行组件。
-- **可见性判定**沿用宿主自己的主题优先级：`DSH_TUI_THEME` 环境变量 > `~/.dsh-tui/theme.json` 持久选择。因此插件只知道“当前主题名”，不缓存调色板；`pink-only` 判据就是那三个内置名。
+- **可见性判定**沿用宿主自己的主题优先级：`DSH_TUI_THEME` 环境变量 > `~/.dsh-tui/theme.json` 持久选择（宿主 0.14.0 起还多一层品牌默认档，可以盖过 `theme.json`，见「兼容性」）。因此插件只知道“当前主题名”，不缓存调色板；`pink-only` 判据就是那三个内置名。
 - **配色**来自 `src/palette.ts` 里内嵌的三个色值（家族 `accent` / `inactiveShimmer` / `subtle`，与宿主内置樱族逐键一致）。宿主没有向插件公开“当前调色板”的查询接缝（运行时主题服务只收注册、不回读），所以这是插件唯一持有的颜色来源；非粉主题一律不着色。
 - **标量行在旧宿主上由宿主统一以无色 + dim 渲染**，插件无法控制颜色——这是宿主行为，富状态视图（≥ 0.10.1）正是为了绕开它。
 - 插件不安装、不注册、不修补任何主题文件，也不修改 `theme.json`（那是宿主的用户偏好）。
@@ -130,6 +130,7 @@ Remove-Item "$env:USERPROFILE\.dsh-tui\theme-plugin-notice.json" -ErrorAction Si
 
 - **dsh-TUI 下限 0.8.8**（状态行与设置面板，0.9.3 实测）。0.10.1 起状态行走富状态视图按内嵌调色板上色，更旧宿主自动回退无色标量行；缺 `dsh-tui-extensions` 扩展面的宿主自动静默降级，不报错。
 - **`pink-only` 判据只是主题名，不检查宿主是否内置**：`pink-night` / `pink-day` / `pink-ansi` 三个名字取自 `DSH_TUI_THEME` 或 `~/.dsh-tui/theme.json`。宿主内置樱族（上游已合并进主线，尚未随宿主发版）时一切照旧；**从 0.7.x 升上来、`~/.dsh-tui/themes/pink-*.json` 还在的用户**，宿主仍把那些文件当静态主题解析，状态行照常显示。只有「宿主未内置樱族 + 没有这些旧文件」的全新安装拿不到粉主题名，`pink-only` 下状态行不会显示——此时改用 `statusScope: all-themes`，或在旧宿主上继续使用 `dsh-tui-theme@0.7.5`。
+- **宿主 0.14.0 起多一层「品牌默认档」，可以盖过 `theme.json`**：没有显式 `theme` prop 或 `DSH_TUI_THEME` 时，宿主按品牌（`DSH_TUI_BRAND` / 设置项 `dsh-tui.brand`）选 `claude-dark`/`claude-paper`（claude）或 `codex-lavender`/`codex-paper`（codex），且不对 `theme.json` 加锁。此时宿主渲染的是品牌主题，而插件仍按 `theme.json` 里的名字判定：那里若还是 `pink-*`，✿ 行照常显示并按樱族上色，与宿主实际渲染不一致——纯观感偏差，不会崩溃。默认品牌 `deepseek` 不在品牌表内，本插件也不读品牌设置：这是有意接受的一处偏差。
 - **`dsh-settings` 两代都支持**：≤ 0.1.6（dsh-TUI 0.9.x/0.10.x）走插件注册命名空间 + `scope.watch`；≥ 0.1.7（dsh-TUI 0.11+）走 Config volatile 字段投影 + `loader/volatile-update` 重读。判定按能力探测，不解析版本号；两条路径的失败都写日志而不是静默。
 - **dsh 运行时 `0.2.0-rc.1` 起有启动期 peer 校验**：宿主读 bundle 的 `peerDependencies`，把 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 段与运行时版本比对，不匹配就跳过整个 bundle（stderr 提示 `skipping profile bundle`）。本插件的 peer 段覆盖 `0.1.0-rc.6`–`0.1.x` 与 `0.2.0-rc.1`–`0.2.x`（自 v0.7.3 起，新世代写作 `^0.2.0-rc.1`），因此 0.2 宿主正常加载。宿主校验固定用 `includePrerelease` 语义，故 0.2 线的预发布档同样放行。
 - Node `^22.19 || >=24`，纯 ESM，MIT。

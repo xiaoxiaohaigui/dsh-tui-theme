@@ -1082,7 +1082,7 @@ const waitFor = async predicate => {
   const packageJson = JSON.parse(readFileSync(join(pluginRoot, 'package.json'), 'utf8'))
   assert.equal(packageJson.files.includes('themes'), false, 'themes/ must not ship')
   assert.equal(existsSync(join(pluginRoot, 'themes')), false, 'themes/ must not exist')
-  for (const module of ['autoTheme', 'themeAssets', 'runtimeThemes', 'shadowCleanup']) {
+  for (const module of ['autoTheme', 'themeAssets', 'runtimeThemes', 'shadowCleanup', 'hostContract']) {
     assert.equal(
       existsSync(join(pluginRoot, 'lib', 'types', `${module}.js`)),
       false,

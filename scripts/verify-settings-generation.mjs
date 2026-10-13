@@ -6,10 +6,10 @@
  * projects each profile entry's Cordis Config instead. A plugin that misses the
  * transition still boots, still registers its card, and simply renders
  * `命名空间未注册`; a card field whose Config key is not marked volatile renders
- * `（未设置）` forever. Both are silent, so they get a gate — the reference
- * record is docs/decisions/2026-09-24-settings-generation-adaptation.md (in the
- * dsh-tui-find repo), whose migration checklist this script implements for
- * dsh-tui-theme.
+ * `（未设置）` forever. Both are silent, so they get a gate — this script is the
+ * same migration checklist the dsh-tui-find plugin went through when that break
+ * hit it, implemented here for dsh-tui-theme (both paths are listed under the
+ * compatibility notes in README.md).
  *
  * What it checks (against the built `lib/types/`, not the sources):
  *   1. `volatileForm(Config)` is non-empty and holds exactly the live keys
